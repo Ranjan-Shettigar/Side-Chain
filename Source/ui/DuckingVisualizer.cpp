@@ -71,10 +71,12 @@ void DuckingVisualizer::timerCallback()
             if (++fifoIndex >= fftSize)
             {
                 fifoIndex = 0;
-                processNextFftBlock();
                 hadNewFft = true;
             }
         }
+
+        if (hadNewFft)
+            processNextFftBlock();
     }
 
     float decayRate = 0.86f;

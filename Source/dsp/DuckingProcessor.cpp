@@ -26,16 +26,16 @@ void DuckingProcessor::initializeBands(int count)
         bands[i].envelopeStateR = 0.0f;
         bands[i].currentGainDbL = 0.0f;
         bands[i].currentGainDbR = 0.0f;
+        bands[i].sensWeightL = 1.0f;
+        bands[i].sensWeightR = 1.0f;
 
         if (sampleRate > 0.0)
         {
-            auto scCoeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, bands[i].centerFreq, bands[i].q);
-            bands[i].scFilterL.coefficients = scCoeffs;
-            bands[i].scFilterR.coefficients = scCoeffs;
-
-            auto mainCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, bands[i].centerFreq, bands[i].q, 1.0f);
-            bands[i].mainEqL.coefficients = mainCoeffs;
-            bands[i].mainEqR.coefficients = mainCoeffs;
+            float sr = static_cast<float>(sampleRate);
+            bands[i].scFilterL.setBandPass(sr, bands[i].centerFreq, bands[i].q);
+            bands[i].scFilterR.setBandPass(sr, bands[i].centerFreq, bands[i].q);
+            bands[i].mainEqL.setPeak(sr, bands[i].centerFreq, bands[i].q, 1.0f);
+            bands[i].mainEqR.setPeak(sr, bands[i].centerFreq, bands[i].q, 1.0f);
 
             bands[i].scFilterL.reset();
             bands[i].scFilterR.reset();
@@ -51,8 +51,10 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
     samplesPerBlock = spec.maximumBlockSize > 0 ? static_cast<int>(spec.maximumBlockSize) : 512;
     numChannels = static_cast<int>(spec.numChannels);
 
+    originalInputBuffer.setSize(2, samplesPerBlock);
     sidechainCopyBuffer.setSize(2, samplesPerBlock);
     soloBuffer.setSize(2, samplesPerBlock);
+    visualizerBlockBuffer.resize(static_cast<size_t>(samplesPerBlock));
 
     smoothedAmount.reset(sampleRate, 0.02);
     smoothedOutputGain.reset(sampleRate, 0.02);
@@ -270,6 +272,16 @@ void DuckingProcessor::setParameters(float amountPercent,
     isBypassed = bypass;
     currentBands = bandConfigs;
     currentStereo = stereoConfig;
+
+    // Precalculate and cache sensitivity weights per active band (Zero per-block transcendental math!)
+    for (int b = 0; b < activeNumBands; ++b)
+    {
+        float centerF = bands[b].centerFreq;
+        float sensDbL = evaluateSensitivityDb(centerF, 0);
+        float sensDbR = evaluateSensitivityDb(centerF, 1);
+        bands[b].sensWeightL = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbL));
+        bands[b].sensWeightR = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbR));
+    }
 }
 
 void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
@@ -294,6 +306,9 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         }
     }
 
+    if (visualizerBlockBuffer.size() < static_cast<size_t>(numSamples))
+        visualizerBlockBuffer.resize(static_cast<size_t>(numSamples));
+
     if (isBypassed)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -301,8 +316,10 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
             float inL = numMainChannels > 0 ? mainBuffer.getSample(0, i) : 0.0f;
             float inR = numMainChannels > 1 ? mainBuffer.getSample(1, i) : inL;
             float inMono = 0.5f * (inL + inR);
-            visualizerFifo.pushSample(inMono, inMono, 0.0f, 1.0f);
+            visualizerBlockBuffer[i] = { inMono, inMono, 0.0f, 1.0f };
         }
+        visualizerFifo.pushBlock(visualizerBlockBuffer.data(), numSamples);
+
         for (int b = 0; b < activeNumBands; ++b)
             bandReductionTelemetry[b].store(0.0f);
 
@@ -341,8 +358,10 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         for (int i = 0; i < numSamples; ++i)
         {
             float scMono = 0.5f * (srcL[i] + srcR[i]);
-            visualizerFifo.pushSample(scMono, scMono, scMono, 1.0f);
+            visualizerBlockBuffer[i] = { scMono, scMono, scMono, 1.0f };
         }
+        visualizerFifo.pushBlock(visualizerBlockBuffer.data(), numSamples);
+
         for (int b = 0; b < activeNumBands; ++b)
             bandReductionTelemetry[b].store(0.0f);
 
@@ -351,8 +370,15 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         return;
     }
 
-    juce::AudioBuffer<float> originalInputCopy;
-    originalInputCopy.makeCopyOf(mainBuffer);
+    // Zero-heap pre-allocated original input copy
+    if (originalInputBuffer.getNumSamples() < numSamples)
+        originalInputBuffer.setSize(2, numSamples, false, false, true);
+
+    originalInputBuffer.copyFrom(0, 0, mainBuffer, 0, 0, numSamples);
+    if (numMainChannels > 1)
+        originalInputBuffer.copyFrom(1, 0, mainBuffer, 1, 0, numSamples);
+    else
+        originalInputBuffer.copyFrom(1, 0, mainBuffer, 0, 0, numSamples);
 
     bool useMidSide = (currentStereo.mode == StereoMode::MidSide) && (numMainChannels >= 2);
     if (useMidSide)
@@ -372,18 +398,18 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
 
     const float* scL = sidechainCopyBuffer.getReadPointer(0);
     const float* scR = sidechainCopyBuffer.getReadPointer(1);
+    float* ch0 = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
+    float* ch1 = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
+    float sr = static_cast<float>(sampleRate);
 
-    // Process all active frequency bands (16 to 128)
+    // Process all active frequency bands (16 to 64)
     for (int b = 0; b < activeNumBands; ++b)
     {
         auto& band = bands[b];
         float centerF = band.centerFreq;
 
-        float sensDbL = evaluateSensitivityDb(centerF, 0);
-        float sensDbR = evaluateSensitivityDb(centerF, 1);
-
-        float sensWeightL = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbL));
-        float sensWeightR = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbR));
+        float sensWeightL = band.sensWeightL;
+        float sensWeightR = band.sensWeightR;
 
         float bandMaxEnergy = 0.0f;
 
@@ -436,14 +462,9 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         float gainLinearL = juce::Decibels::decibelsToGain(band.currentGainDbL);
         float gainLinearR = juce::Decibels::decibelsToGain(band.currentGainDbR);
 
-        auto eqCoeffsL = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, centerF, band.q, gainLinearL);
-        auto eqCoeffsR = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, centerF, band.q, gainLinearR);
-
-        band.mainEqL.coefficients = eqCoeffsL;
-        band.mainEqR.coefficients = eqCoeffsR;
-
-        float* ch0 = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
-        float* ch1 = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
+        // In-place biquad peak filter coefficient update (Zero heap allocation!)
+        band.mainEqL.setPeak(sr, centerF, band.q, gainLinearL);
+        band.mainEqR.setPeak(sr, centerF, band.q, gainLinearR);
 
         for (int i = 0; i < numSamples; ++i)
         {
@@ -458,8 +479,10 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     float* finalL = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
     float* finalR = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
 
-    const float* origL = originalInputCopy.getReadPointer(0);
-    const float* origR = numMainChannels > 1 ? originalInputCopy.getReadPointer(1) : origL;
+    const float* origL = originalInputBuffer.getReadPointer(0);
+    const float* origR = numMainChannels > 1 ? originalInputBuffer.getReadPointer(1) : origL;
+
+    float minLinearGr = juce::Decibels::decibelsToGain(-maxGainReductionInBlock);
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -470,10 +493,11 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         float inMono = 0.5f * (origL[i] + origR[i]);
         float outMono = 0.5f * ((finalL != nullptr ? finalL[i] : 0.0f) + (finalR != nullptr ? finalR[i] : 0.0f));
         float scMono = 0.5f * (sidechainCopyBuffer.getSample(0, i) + sidechainCopyBuffer.getSample(1, i));
-        float minLinearGr = juce::Decibels::decibelsToGain(-maxGainReductionInBlock);
 
-        visualizerFifo.pushSample(inMono, outMono, scMono, minLinearGr);
+        visualizerBlockBuffer[i] = { inMono, outMono, scMono, minLinearGr };
     }
+
+    visualizerFifo.pushBlock(visualizerBlockBuffer.data(), numSamples);
 
     float overallLinearGr = juce::Decibels::decibelsToGain(-maxGainReductionInBlock);
     currentGainReduction.store(overallLinearGr);

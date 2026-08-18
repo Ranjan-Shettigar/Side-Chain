@@ -147,27 +147,89 @@ private:
     void encodeToMidSide(juce::AudioBuffer<float>& buffer);
     void decodeFromMidSide(juce::AudioBuffer<float>& buffer);
 
+    struct Biquad
+    {
+        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+        float a1 = 0.0f, a2 = 0.0f;
+        float z1 = 0.0f, z2 = 0.0f;
+
+        void reset() noexcept
+        {
+            z1 = 0.0f;
+            z2 = 0.0f;
+        }
+
+        void setBandPass(float sampleRate, float centerFreq, float q) noexcept
+        {
+            float w0 = 2.0f * juce::MathConstants<float>::pi * centerFreq / sampleRate;
+            float alpha = std::sin(w0) / (2.0f * q);
+            float cosw0 = std::cos(w0);
+
+            float a0 = 1.0f + alpha;
+            b0 = alpha / a0;
+            b1 = 0.0f;
+            b2 = -alpha / a0;
+            a1 = (-2.0f * cosw0) / a0;
+            a2 = (1.0f - alpha) / a0;
+        }
+
+        void setPeak(float sampleRate, float centerFreq, float q, float gainLinear) noexcept
+        {
+            if (std::abs(gainLinear - 1.0f) < 0.00005f)
+            {
+                b0 = 1.0f; b1 = 0.0f; b2 = 0.0f;
+                a1 = 0.0f; a2 = 0.0f;
+                return;
+            }
+
+            float A = std::sqrt(gainLinear);
+            float w0 = 2.0f * juce::MathConstants<float>::pi * centerFreq / sampleRate;
+            float alpha = std::sin(w0) / (2.0f * q);
+            float cosw0 = std::cos(w0);
+
+            float a0 = 1.0f + alpha / A;
+            b0 = (1.0f + alpha * A) / a0;
+            b1 = (-2.0f * cosw0) / a0;
+            b2 = (1.0f - alpha * A) / a0;
+            a1 = (-2.0f * cosw0) / a0;
+            a2 = (1.0f - alpha / A) / a0;
+        }
+
+        inline float processSample(float in) noexcept
+        {
+            float out = b0 * in + z1;
+            z1 = b1 * in - a1 * out + z2;
+            z2 = b2 * in - a2 * out;
+            return out;
+        }
+    };
+
     struct DynamicBand
     {
         float centerFreq = 1000.0f;
         float q = 2.4f;
 
-        juce::dsp::IIR::Filter<float> scFilterL;
-        juce::dsp::IIR::Filter<float> scFilterR;
+        Biquad scFilterL;
+        Biquad scFilterR;
 
-        juce::dsp::IIR::Filter<float> mainEqL;
-        juce::dsp::IIR::Filter<float> mainEqR;
+        Biquad mainEqL;
+        Biquad mainEqR;
 
         float envelopeStateL = 0.0f;
         float envelopeStateR = 0.0f;
         float currentGainDbL = 0.0f;
         float currentGainDbR = 0.0f;
+
+        float sensWeightL = 1.0f;
+        float sensWeightR = 1.0f;
     };
 
     std::array<DynamicBand, MaxBands> bands;
 
+    juce::AudioBuffer<float> originalInputBuffer;
     juce::AudioBuffer<float> sidechainCopyBuffer;
     juce::AudioBuffer<float> soloBuffer;
+    std::vector<AudioVisualizerFifo::VisualizerSample> visualizerBlockBuffer;
 
     // Telemetry
     std::atomic<float> currentGainReduction { 1.0f };

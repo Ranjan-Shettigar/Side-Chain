@@ -122,35 +122,55 @@ void CustomLookAndFeel::drawRotarySlider(juce::Graphics& g,
 
 void CustomLookAndFeel::drawLinearSlider(juce::Graphics& g,
                                          int x, int y, int width, int height,
-                                         float sliderPos,
-                                         float minSliderPos,
-                                         float maxSliderPos,
+                                         float /*sliderPos*/,
+                                         float /*minSliderPos*/,
+                                         float /*maxSliderPos*/,
                                          const juce::Slider::SliderStyle /*style*/,
                                          juce::Slider& slider)
 {
-    auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(2.0f);
-    float cornerRadius = 6.0f;
+    auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(1.5f);
+    float cornerRadius = bounds.getHeight() * 0.35f;
 
     // Track Background
-    g.setColour(slider.isEnabled() ? m3SurfaceContainerHigh : m3SurfaceContainerHigh.withAlpha(0.4f));
+    g.setColour(slider.isEnabled() ? m3SurfaceContainerHighest : m3SurfaceContainerHighest.withAlpha(0.35f));
     g.fillRoundedRectangle(bounds, cornerRadius);
 
-    // Active Bar
-    float minX = minSliderPos;
-    float maxX = maxSliderPos;
-    float currentX = sliderPos;
+    float norm = static_cast<float>(slider.valueToProportionOfLength(slider.getValue()));
+    norm = juce::jlimit(0.0f, 1.0f, norm);
 
-    float norm = (maxX > minX) ? juce::jlimit(0.0f, 1.0f, (currentX - minX) / (maxX - minX)) : 0.5f;
-    auto activeBounds = juce::Rectangle<float>(bounds.getX(), bounds.getY(), bounds.getWidth() * norm, bounds.getHeight());
-
-    if (slider.isEnabled() && norm > 0.01f)
+    if (slider.isEnabled() && norm > 0.005f)
     {
-        g.setColour(m3PrimaryContainer.withAlpha(0.6f));
+        float activeWidth = bounds.getWidth() * norm;
+        auto activeBounds = juce::Rectangle<float>(bounds.getX(), bounds.getY(), activeWidth, bounds.getHeight());
+
+        // Dynamic Color Shift from 0% (subtle navy/slate) to 100% (vibrant soft primary blue)
+        juce::Colour startCol = juce::Colour::fromRGB(45, 90, 140);
+        juce::Colour endCol   = m3Primary;
+        juce::Colour currentFillCol = startCol.interpolatedWith(endCol, norm);
+
+        juce::ColourGradient grad(currentFillCol.withAlpha(0.70f), bounds.getX(), bounds.getY(),
+                                  currentFillCol, bounds.getX() + activeWidth, bounds.getY(), false);
+
+        g.setGradientFill(grad);
         g.fillRoundedRectangle(activeBounds, cornerRadius);
+
+        // Indicator edge glow
+        g.setColour(m3OnSurface.withAlpha(0.9f));
+        g.drawVerticalLine(static_cast<int>(bounds.getX() + activeWidth - 1.0f), bounds.getY() + 2.0f, bounds.getBottom() - 2.0f);
     }
 
-    g.setColour(m3OutlineVariant);
+    // Border Outline
+    g.setColour(slider.isMouseOverOrDragging() ? m3Primary.withAlpha(0.6f) : m3OutlineVariant);
     g.drawRoundedRectangle(bounds, cornerRadius, 1.0f);
+
+    // Text Display Centered inside Bar
+    if (slider.isEnabled())
+    {
+        g.setColour(m3OnSurface);
+        g.setFont(juce::Font(11.0f, juce::Font::bold));
+        juce::String text = juce::String(static_cast<int>(std::round(slider.getValue()))) + " %";
+        g.drawText(text, bounds, juce::Justification::centred, false);
+    }
 }
 
 void CustomLookAndFeel::drawToggleButton(juce::Graphics& g,

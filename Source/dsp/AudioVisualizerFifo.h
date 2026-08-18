@@ -42,6 +42,26 @@ public:
         abstractFifo.finishedWrite(size1 + size2);
     }
 
+    void pushBlock(const VisualizerSample* samples, int numSamples)
+    {
+        if (numSamples <= 0 || samples == nullptr)
+            return;
+
+        int start1, size1, start2, size2;
+        abstractFifo.prepareToWrite(numSamples, start1, size1, start2, size2);
+
+        if (size1 > 0)
+        {
+            std::memcpy(&buffer[start1], samples, sizeof(VisualizerSample) * size1);
+        }
+        if (size2 > 0)
+        {
+            std::memcpy(&buffer[start2], samples + size1, sizeof(VisualizerSample) * size2);
+        }
+
+        abstractFifo.finishedWrite(size1 + size2);
+    }
+
     int readAvailable(VisualizerSample* destination, int maxSamplesToRead)
     {
         int numReady = abstractFifo.getNumReady();

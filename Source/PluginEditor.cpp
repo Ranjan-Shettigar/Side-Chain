@@ -70,8 +70,8 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     addAndMakeVisible(stereoLinkLabel);
 
     stereoLinkSlider.setSliderStyle(juce::Slider::LinearBar);
-    stereoLinkSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 24);
-    stereoLinkSlider.setTextValueSuffix("");
+    stereoLinkSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    stereoLinkSlider.setName("Stereo Link");
     addAndMakeVisible(stereoLinkSlider);
     stereoLinkAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "stereo_link", stereoLinkSlider);
 
