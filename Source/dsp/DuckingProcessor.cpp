@@ -6,6 +6,26 @@ DuckingProcessor::DuckingProcessor()
     lowCutFilterR.setType(juce::dsp::StateVariableTPTFilterType::highpass);
     highCutFilterL.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
     highCutFilterR.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+
+    initializeBands();
+}
+
+void DuckingProcessor::initializeBands()
+{
+    // Compute 32 log-spaced center frequencies from ~25 Hz to ~18,500 Hz (1/3 octave spacing)
+    const float minLog = std::log10(25.0f);
+    const float maxLog = std::log10(18500.0f);
+
+    for (int i = 0; i < NumBands; ++i)
+    {
+        float norm = static_cast<float>(i) / static_cast<float>(NumBands - 1);
+        float logFreq = minLog + norm * (maxLog - minLog);
+        bands[i].centerFreq = std::pow(10.0f, logFreq);
+        bands[i].q = 1.8f; // standard bandwidth for 32-band overlapping coverage
+        bands[i].envelopeState = 0.0f;
+        bands[i].currentGainDb = 0.0f;
+        bands[i].targetGainDb = 0.0f;
+    }
 }
 
 void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
@@ -28,6 +48,25 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
     smoothedAmount.reset(sampleRate, 0.02); // 20ms ramp
     smoothedOutputGain.reset(sampleRate, 0.02);
 
+    // Initialize filter coefficients for all 32 bands
+    for (int i = 0; i < NumBands; ++i)
+    {
+        auto scCoeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, bands[i].centerFreq, bands[i].q);
+        bands[i].scFilterL.coefficients = scCoeffs;
+        bands[i].scFilterR.coefficients = scCoeffs;
+
+        auto mainCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, bands[i].centerFreq, bands[i].q, 1.0f);
+        bands[i].mainEqL.coefficients = mainCoeffs;
+        bands[i].mainEqR.coefficients = mainCoeffs;
+
+        bands[i].scFilterL.reset();
+        bands[i].scFilterR.reset();
+        bands[i].mainEqL.reset();
+        bands[i].mainEqR.reset();
+        bands[i].envelopeState = 0.0f;
+        bands[i].currentGainDb = 0.0f;
+    }
+
     reset();
 }
 
@@ -38,7 +77,16 @@ void DuckingProcessor::reset()
     highCutFilterL.reset();
     highCutFilterR.reset();
 
-    envelopeState = 0.0f;
+    for (int i = 0; i < NumBands; ++i)
+    {
+        bands[i].scFilterL.reset();
+        bands[i].scFilterR.reset();
+        bands[i].mainEqL.reset();
+        bands[i].mainEqR.reset();
+        bands[i].envelopeState = 0.0f;
+        bands[i].currentGainDb = 0.0f;
+    }
+
     currentGainReduction.store(1.0f);
     currentSidechainLevel.store(0.0f);
     updateCoefficients();
@@ -46,14 +94,12 @@ void DuckingProcessor::reset()
 
 void DuckingProcessor::updateCoefficients()
 {
-    // Convert attack/release ms to smoothing coefficients
     float attackSec = juce::jmax(0.0001f, attackTimeMs * 0.001f);
     float releaseSec = juce::jmax(0.001f, releaseTimeMs * 0.001f);
 
     attackCoeff = std::exp(-1.0f / (attackSec * static_cast<float>(sampleRate)));
     releaseCoeff = std::exp(-1.0f / (releaseSec * static_cast<float>(sampleRate)));
 
-    // Update filter cutoffs
     float safeLowCut = juce::jlimit(20.0f, 20000.0f, lowCutFreq);
     float safeHighCut = juce::jlimit(20.0f, 20000.0f, highCutFreq);
 
@@ -108,7 +154,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (numSamples == 0)
         return;
 
-    // If bypassed, push clean telemetry and return
+    // If bypassed, push clean audio and return
     if (isBypassed)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -127,7 +173,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (sidechainFilterBuffer.getNumSamples() < numSamples)
         sidechainFilterBuffer.setSize(2, numSamples, false, false, true);
 
-    // Prepare sidechain signal into temporary filter buffer
+    // Copy sidechain signal into temporary filter buffer
     if (numSidechainChannels > 0)
     {
         sidechainFilterBuffer.copyFrom(0, 0, sidechainBuffer, 0, 0, numSamples);
@@ -138,11 +184,10 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     }
     else
     {
-        // No sidechain input routed, clear
         sidechainFilterBuffer.clear();
     }
 
-    // Apply Low-Cut and High-Cut sidechain filtering
+    // Apply global Low-Cut and High-Cut sidechain filtering
     for (int i = 0; i < numSamples; ++i)
     {
         float scL = sidechainFilterBuffer.getSample(0, i);
@@ -158,7 +203,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         sidechainFilterBuffer.setSample(1, i, scR);
     }
 
-    // If Sidechain Listen is activated, route filtered sidechain straight to output
+    // If Sidechain Listen is activated, route filtered sidechain directly to output
     if (listenSidechain)
     {
         for (int ch = 0; ch < numMainChannels; ++ch)
@@ -177,67 +222,107 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         return;
     }
 
-    // Main ducking processing loop
-    float minGainReductionInBlock = 1.0f;
+    // Capture initial un-ducked main audio for visualizer comparison
+    juce::AudioBuffer<float> originalInputCopy;
+    originalInputCopy.makeCopyOf(mainBuffer);
+
+    float curAmount = smoothedAmount.getNextValue();
     float maxSidechainInBlock = 0.0f;
+    float maxGainReductionInBlock = 0.0f; // in dB
 
-    float* mainL = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
-    float* mainR = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
+    const float* scL = sidechainFilterBuffer.getReadPointer(0);
+    const float* scR = sidechainFilterBuffer.getReadPointer(1);
 
-    const float* scFilteredL = sidechainFilterBuffer.getReadPointer(0);
-    const float* scFilteredR = sidechainFilterBuffer.getReadPointer(1);
+    // 1. Process 32 frequency bands independently
+    for (int b = 0; b < NumBands; ++b)
+    {
+        auto& band = bands[b];
+        float centerF = band.centerFreq;
+
+        // Band filtering weight based on Low-Cut and High-Cut range
+        float bandWeight = 1.0f;
+        if (centerF < lowCutFreq)
+        {
+            float ratio = centerF / juce::jmax(1.0f, lowCutFreq);
+            bandWeight = juce::jlimit(0.0f, 1.0f, ratio * ratio);
+        }
+        else if (centerF > highCutFreq)
+        {
+            float ratio = highCutFreq / centerF;
+            bandWeight = juce::jlimit(0.0f, 1.0f, ratio * ratio);
+        }
+
+        // Detect sidechain energy specifically in this band
+        float bandMaxEnergy = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float filteredScL = band.scFilterL.processSample(scL[i]);
+            float filteredScR = band.scFilterR.processSample(scR[i]);
+            float scMag = juce::jmax(std::abs(filteredScL), std::abs(filteredScR));
+
+            if (scMag > band.envelopeState)
+                band.envelopeState = attackCoeff * band.envelopeState + (1.0f - attackCoeff) * scMag;
+            else
+                band.envelopeState = releaseCoeff * band.envelopeState + (1.0f - releaseCoeff) * scMag;
+
+            if (band.envelopeState > bandMaxEnergy)
+                bandMaxEnergy = band.envelopeState;
+        }
+
+        if (bandMaxEnergy > maxSidechainInBlock)
+            maxSidechainInBlock = bandMaxEnergy;
+
+        // Calculate dynamic ducking cut specifically for this band (Trackspacer dynamic EQ curve)
+        // Up to -48 dB cut at 100% amount when sidechain has high energy
+        float bandEnvNorm = juce::jlimit(0.0f, 2.0f, band.envelopeState * 2.5f);
+        float targetCutDb = -48.0f * curAmount * bandEnvNorm * bandWeight;
+        targetCutDb = juce::jlimit(-48.0f, 0.0f, targetCutDb);
+
+        // Smooth band gain transition
+        band.currentGainDb = band.currentGainDb * 0.4f + targetCutDb * 0.6f;
+
+        if (std::abs(band.currentGainDb) > maxGainReductionInBlock)
+            maxGainReductionInBlock = std::abs(band.currentGainDb);
+
+        // Update dynamic peaking bell EQ coefficients on the main audio for this frequency band
+        float gainLinear = juce::Decibels::decibelsToGain(band.currentGainDb);
+        auto eqCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, centerF, band.q, gainLinear);
+        band.mainEqL.coefficients = eqCoeffs;
+        band.mainEqR.coefficients = eqCoeffs;
+
+        // Apply dynamic EQ cut to main audio channels
+        float* ch0 = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
+        float* ch1 = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            if (ch0 != nullptr) ch0[i] = band.mainEqL.processSample(ch0[i]);
+            if (ch1 != nullptr) ch1[i] = band.mainEqR.processSample(ch1[i]);
+        }
+    }
+
+    // 2. Apply Output Gain Trim & push telemetry to Visualizer FIFO
+    float* finalL = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
+    float* finalR = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
+
+    const float* origL = originalInputCopy.getReadPointer(0);
+    const float* origR = numMainChannels > 1 ? originalInputCopy.getReadPointer(1) : origL;
 
     for (int i = 0; i < numSamples; ++i)
     {
-        float curAmount = smoothedAmount.getNextValue();
-        float curGain = smoothedOutputGain.getNextValue();
+        float outGain = smoothedOutputGain.getNextValue();
+        if (finalL != nullptr) finalL[i] *= outGain;
+        if (finalR != nullptr) finalR[i] *= outGain;
 
-        // 1. Detect sidechain trigger amplitude
-        float scSampleL = std::abs(scFilteredL[i]);
-        float scSampleR = std::abs(scFilteredR[i]);
-        float scRect = juce::jmax(scSampleL, scSampleR);
+        float inMono = 0.5f * (origL[i] + origR[i]);
+        float outMono = 0.5f * ((finalL != nullptr ? finalL[i] : 0.0f) + (finalR != nullptr ? finalR[i] : 0.0f));
+        float scMono = 0.5f * (scL[i] + scR[i]);
+        float minLinearGr = juce::Decibels::decibelsToGain(-maxGainReductionInBlock);
 
-        if (scRect > maxSidechainInBlock)
-            maxSidechainInBlock = scRect;
-
-        // 2. Ballistics Envelope Follower
-        if (scRect > envelopeState)
-            envelopeState = attackCoeff * envelopeState + (1.0f - attackCoeff) * scRect;
-        else
-            envelopeState = releaseCoeff * envelopeState + (1.0f - releaseCoeff) * scRect;
-
-        // 3. Calculate Gain Reduction
-        // Using dynamic compression/ducking curve:
-        // When amount = 0.0, gainFactor = 1.0 (0 dB reduction)
-        // When amount = 1.0, ducking reaches max attenuation (-48dB or full silence depending on trigger)
-        float envNorm = juce::jlimit(0.0f, 2.0f, envelopeState);
-        
-        // Trackspacer-style logarithmic ducking curve
-        float reductionDb = -48.0f * curAmount * envNorm;
-        reductionDb = juce::jlimit(-60.0f, 0.0f, reductionDb);
-        float gainFactor = juce::Decibels::decibelsToGain(reductionDb);
-
-        if (gainFactor < minGainReductionInBlock)
-            minGainReductionInBlock = gainFactor;
-
-        // 4. Capture original main input for visualizer
-        float inL = mainL != nullptr ? mainL[i] : 0.0f;
-        float inR = mainR != nullptr ? mainR[i] : 0.0f;
-        float inMono = 0.5f * (inL + inR);
-
-        // 5. Apply ducking and output gain
-        float outL = inL * gainFactor * curGain;
-        float outR = inR * gainFactor * curGain;
-
-        if (mainL != nullptr) mainL[i] = outL;
-        if (mainR != nullptr) mainR[i] = outR;
-
-        float outMono = 0.5f * (outL + outR);
-
-        // 6. Push to visualizer FIFO
-        visualizerFifo.pushSample(inMono, outMono, scRect, gainFactor);
+        visualizerFifo.pushSample(inMono, outMono, scMono, minLinearGr);
     }
 
-    currentGainReduction.store(minGainReductionInBlock);
+    float overallLinearGr = juce::Decibels::decibelsToGain(-maxGainReductionInBlock);
+    currentGainReduction.store(overallLinearGr);
     currentSidechainLevel.store(maxSidechainInBlock);
 }

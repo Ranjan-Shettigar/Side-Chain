@@ -3,21 +3,20 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 /**
- * Lock-free FIFO structure for passing audio waveform and ducking telemetry
- * safely from the DSP thread to the UI visualizer thread.
+ * Lock-free FIFO structure for streaming audio frames (Input, Output, Sidechain, GR)
+ * from the DSP audio thread to the UI thread for FFT Spectrum Analysis.
  */
 class AudioVisualizerFifo
 {
 public:
-    static constexpr int FifoCapacity = 16384;
-    static constexpr int SubsampleFactor = 32; // Decimate samples to provide smooth long-window scrolling
+    static constexpr int FifoCapacity = 32768;
 
     struct VisualizerSample
     {
-        float inputSample = 0.0f;
-        float outputSample = 0.0f;
-        float sidechainSample = 0.0f;
-        float gainReduction = 1.0f; // 1.0 = no reduction, 0.0 = full reduction
+        float inSample = 0.0f;
+        float outSample = 0.0f;
+        float scSample = 0.0f;
+        float gainReduction = 1.0f;
     };
 
     AudioVisualizerFifo()
@@ -28,25 +27,19 @@ public:
 
     void pushSample(float input, float output, float sidechain, float gr)
     {
-        // Simple subsampling / decimation counter to save CPU & bandwidth
-        if (++sampleCounter >= SubsampleFactor)
+        int start1, size1, start2, size2;
+        abstractFifo.prepareToWrite(1, start1, size1, start2, size2);
+
+        if (size1 > 0)
         {
-            sampleCounter = 0;
-
-            int start1, size1, start2, size2;
-            abstractFifo.prepareToWrite(1, start1, size1, start2, size2);
-
-            if (size1 > 0)
-            {
-                buffer[start1] = { input, output, sidechain, gr };
-            }
-            else if (size2 > 0)
-            {
-                buffer[start2] = { input, output, sidechain, gr };
-            }
-
-            abstractFifo.finishedWrite(size1 + size2);
+            buffer[start1] = { input, output, sidechain, gr };
         }
+        else if (size2 > 0)
+        {
+            buffer[start2] = { input, output, sidechain, gr };
+        }
+
+        abstractFifo.finishedWrite(size1 + size2);
     }
 
     int readAvailable(VisualizerSample* destination, int maxSamplesToRead)
@@ -76,11 +69,9 @@ public:
     void reset()
     {
         abstractFifo.reset();
-        sampleCounter = 0;
     }
 
 private:
     juce::AbstractFifo abstractFifo;
     std::vector<VisualizerSample> buffer;
-    int sampleCounter = 0;
 };

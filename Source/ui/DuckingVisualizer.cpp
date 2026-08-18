@@ -2,11 +2,26 @@
 #include "CustomLookAndFeel.h"
 
 DuckingVisualizer::DuckingVisualizer(AudioVisualizerFifo& fifo)
-    : audioFifo(fifo)
+    : audioFifo(fifo),
+      forwardFFT(fftOrder),
+      window(fftSize, juce::dsp::WindowingFunction<float>::hann)
 {
-    history.resize(NumHistoryPoints);
-    readBuffer.resize(1024);
+    spectrumIn.assign(numSpectrumBins, -80.0f);
+    spectrumOut.assign(numSpectrumBins, -80.0f);
+    spectrumSC.assign(numSpectrumBins, -80.0f);
+    binFrequencies.resize(numSpectrumBins);
 
+    // Precalculate log-spaced frequency points from 20 Hz to 20,000 Hz
+    float minLog = std::log10(20.0f);
+    float maxLog = std::log10(20000.0f);
+    for (int i = 0; i < numSpectrumBins; ++i)
+    {
+        float norm = static_cast<float>(i) / static_cast<float>(numSpectrumBins - 1);
+        float logFreq = minLog + norm * (maxLog - minLog);
+        binFrequencies[i] = std::pow(10.0f, logFreq);
+    }
+
+    readBuffer.resize(4096);
     startTimerHz(60); // 60 FPS update rate
 }
 
@@ -25,33 +40,127 @@ void DuckingVisualizer::setFilterFrequencies(float lowCutHz, float highCutHz)
     highCutFreq = highCutHz;
 }
 
-void DuckingVisualizer::pushPoint(float in, float out, float sc, float gr)
-{
-    history[writeIndex] = { in, out, sc, gr };
-    writeIndex = (writeIndex + 1) % NumHistoryPoints;
-}
-
 void DuckingVisualizer::timerCallback()
 {
     int numRead = audioFifo.readAvailable(readBuffer.data(), static_cast<int>(readBuffer.size()));
+    bool hadNewFft = false;
 
     if (numRead > 0)
     {
-        // Aggregate samples into history buffer
         for (int i = 0; i < numRead; ++i)
         {
-            const auto& s = readBuffer[i];
-            pushPoint(std::abs(s.inputSample), std::abs(s.outputSample), std::abs(s.sidechainSample), s.gainReduction);
+            fifoBufferIn[fifoIndex] = readBuffer[i].inSample;
+            fifoBufferOut[fifoIndex] = readBuffer[i].outSample;
+            fifoBufferSC[fifoIndex] = readBuffer[i].scSample;
+
+            if (++fifoIndex >= fftSize)
+            {
+                fifoIndex = 0;
+                processNextFftBlock();
+                hadNewFft = true;
+            }
         }
-        repaint();
     }
+
+    // Apply continuous smooth decay even during silence
+    float decayRate = 0.88f;
+    for (int i = 0; i < numSpectrumBins; ++i)
+    {
+        spectrumIn[i] = spectrumIn[i] * decayRate + (-80.0f) * (1.0f - decayRate);
+        spectrumOut[i] = spectrumOut[i] * decayRate + (-80.0f) * (1.0f - decayRate);
+        spectrumSC[i] = spectrumSC[i] * decayRate + (-80.0f) * (1.0f - decayRate);
+    }
+
+    if (hadNewFft)
+    {
+        computeSpectrumPoints();
+    }
+
+    repaint();
+}
+
+void DuckingVisualizer::processNextFftBlock()
+{
+    // Copy into FFT working buffers (2 * fftSize)
+    std::fill(fftDataIn.begin(), fftDataIn.end(), 0.0f);
+    std::fill(fftDataOut.begin(), fftDataOut.end(), 0.0f);
+    std::fill(fftDataSC.begin(), fftDataSC.end(), 0.0f);
+
+    std::copy(fifoBufferIn.begin(), fifoBufferIn.end(), fftDataIn.begin());
+    std::copy(fifoBufferOut.begin(), fifoBufferOut.end(), fftDataOut.begin());
+    std::copy(fifoBufferSC.begin(), fifoBufferSC.end(), fftDataSC.begin());
+
+    // Apply Hann window
+    window.multiplyWithWindowingTable(fftDataIn.data(), fftSize);
+    window.multiplyWithWindowingTable(fftDataOut.data(), fftSize);
+    window.multiplyWithWindowingTable(fftDataSC.data(), fftSize);
+
+    // Forward FFT
+    forwardFFT.performFrequencyOnlyForwardTransform(fftDataIn.data());
+    forwardFFT.performFrequencyOnlyForwardTransform(fftDataOut.data());
+    forwardFFT.performFrequencyOnlyForwardTransform(fftDataSC.data());
+}
+
+float DuckingVisualizer::getMagnitudeForFrequency(const std::array<float, 2 * fftSize>& fftData, float frequency) const
+{
+    float binIndexFloat = (frequency / static_cast<float>(sampleRate)) * static_cast<float>(fftSize);
+    int bin0 = juce::jlimit(0, fftSize / 2 - 1, static_cast<int>(binIndexFloat));
+    int bin1 = juce::jmin(fftSize / 2 - 1, bin0 + 1);
+    float frac = binIndexFloat - static_cast<float>(bin0);
+
+    float mag0 = fftData[bin0];
+    float mag1 = fftData[bin1];
+    float mag = mag0 + frac * (mag1 - mag0);
+
+    // Normalize FFT amplitude
+    float normalizedMag = mag / static_cast<float>(fftSize * 0.5f);
+    float db = juce::Decibels::gainToDecibels(juce::jmax(1e-5f, normalizedMag), -80.0f);
+    return juce::jlimit(-80.0f, 12.0f, db);
+}
+
+void DuckingVisualizer::computeSpectrumPoints()
+{
+    for (int i = 0; i < numSpectrumBins; ++i)
+    {
+        float freq = binFrequencies[i];
+
+        float targetIn = getMagnitudeForFrequency(fftDataIn, freq);
+        float targetOut = getMagnitudeForFrequency(fftDataOut, freq);
+        float targetSC = getMagnitudeForFrequency(fftDataSC, freq);
+
+        // Smooth attack / decay
+        auto smoothDb = [](float current, float target) {
+            float alpha = target > current ? 0.65f : 0.25f;
+            return current + alpha * (target - current);
+        };
+
+        spectrumIn[i] = smoothDb(spectrumIn[i], targetIn);
+        spectrumOut[i] = smoothDb(spectrumOut[i], targetOut);
+        spectrumSC[i] = smoothDb(spectrumSC[i], targetSC);
+    }
+}
+
+float DuckingVisualizer::mapFrequencyToX(float freq, float startX, float width) const
+{
+    float minLog = std::log10(20.0f);
+    float maxLog = std::log10(20000.0f);
+    float norm = (std::log10(juce::jlimit(20.0f, 20000.0f, freq)) - minLog) / (maxLog - minLog);
+    return startX + norm * width;
+}
+
+float DuckingVisualizer::mapDbToY(float db, float topY, float height) const
+{
+    const float minDb = -72.0f;
+    const float maxDb = 6.0f;
+    float norm = (juce::jlimit(minDb, maxDb, db) - minDb) / (maxDb - minDb);
+    return topY + height - norm * height;
 }
 
 void DuckingVisualizer::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // 1. Background Card
+    // 1. Background Card & Frame
     g.setColour(CustomLookAndFeel::bgCardInner);
     g.fillRoundedRectangle(bounds, 8.0f);
 
@@ -59,148 +168,157 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     g.drawRoundedRectangle(bounds, 8.0f, 1.0f);
 
     auto displayArea = bounds.reduced(8.0f);
+    float startX = displayArea.getX();
+    float startY = displayArea.getY();
     float width = displayArea.getWidth();
     float height = displayArea.getHeight();
-    float centerY = displayArea.getCentreY();
-    float halfHeight = height * 0.46f;
 
-    // 2. Subtle Grid Lines
-    g.setColour(juce::Colour::fromRGB(25, 32, 42));
-    g.drawHorizontalLine(static_cast<int>(centerY), displayArea.getX(), displayArea.getRight());
-    g.drawHorizontalLine(static_cast<int>(centerY - halfHeight * 0.5f), displayArea.getX(), displayArea.getRight());
-    g.drawHorizontalLine(static_cast<int>(centerY + halfHeight * 0.5f), displayArea.getX(), displayArea.getRight());
+    // 2. Frequency Grid Lines & Labels (Log scale)
+    const std::vector<std::pair<float, juce::String>> freqMarkers = {
+        { 50.0f, "50" }, { 100.0f, "100" }, { 250.0f, "250" }, { 500.0f, "500" },
+        { 1000.0f, "1k" }, { 2500.0f, "2.5k" }, { 5000.0f, "5k" }, { 10000.0f, "10k" }, { 20000.0f, "20k" }
+    };
 
-    // 3. Sidechain Frequency Curtains (Low Cut & High Cut visual indicators)
-    float minLog = std::log10(20.0f);
-    float maxLog = std::log10(20000.0f);
-    float lowCutNorm = juce::jlimit(0.0f, 1.0f, (std::log10(juce::jmax(20.0f, lowCutFreq)) - minLog) / (maxLog - minLog));
-    float highCutNorm = juce::jlimit(0.0f, 1.0f, (std::log10(juce::jmax(20.0f, highCutFreq)) - minLog) / (maxLog - minLog));
-
-    float lowCutX = displayArea.getX() + lowCutNorm * width;
-    float highCutX = displayArea.getX() + highCutNorm * width;
-
-    // Filter curtain shading
-    if (lowCutX > displayArea.getX())
+    g.setFont(juce::Font(9.0f, juce::Font::plain));
+    for (const auto& [freq, label] : freqMarkers)
     {
-        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.08f));
-        g.fillRect(displayArea.getX(), displayArea.getY(), lowCutX - displayArea.getX(), height);
+        float x = mapFrequencyToX(freq, startX, width);
+        g.setColour(juce::Colour::fromRGB(28, 35, 46));
+        g.drawVerticalLine(static_cast<int>(x), startY, startY + height);
 
-        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.4f));
-        g.drawVerticalLine(static_cast<int>(lowCutX), displayArea.getY(), displayArea.getBottom());
+        g.setColour(juce::Colour::fromRGB(90, 100, 115));
+        g.drawText(label, static_cast<int>(x - 15.0f), static_cast<int>(startY + height - 14.0f), 30, 12, juce::Justification::centred);
     }
 
-    if (highCutX < displayArea.getRight())
+    // 3. dB Grid Lines & Labels
+    const std::vector<float> dbMarkers = { 0.0f, -12.0f, -24.0f, -36.0f, -48.0f, -60.0f };
+    for (float db : dbMarkers)
     {
-        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.08f));
-        g.fillRect(highCutX, displayArea.getY(), displayArea.getRight() - highCutX, height);
+        float y = mapDbToY(db, startY, height);
+        g.setColour(juce::Colour::fromRGB(24, 30, 40));
+        g.drawHorizontalLine(static_cast<int>(y), startX, startX + width);
 
-        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.4f));
-        g.drawVerticalLine(static_cast<int>(highCutX), displayArea.getY(), displayArea.getBottom());
+        g.setColour(juce::Colour::fromRGB(75, 85, 98));
+        g.drawText(juce::String(static_cast<int>(db)) + "dB",
+                   static_cast<int>(startX + width - 36.0f), static_cast<int>(y - 11.0f), 32, 10, juce::Justification::right);
     }
 
-    // 4. Build Waveform Paths
-    juce::Path inPathTop, inPathBottom;
-    juce::Path outPathTop, outPathBottom;
-    juce::Path duckZonePath;
-    juce::Path scPath;
+    // 4. Sidechain Frequency Curtains (Low Cut & High Cut active band)
+    float lowCutX = mapFrequencyToX(lowCutFreq, startX, width);
+    float highCutX = mapFrequencyToX(highCutFreq, startX, width);
 
-    int numPoints = NumHistoryPoints;
-    float stepX = width / static_cast<float>(numPoints - 1);
-
-    bool started = false;
-
-    // Vectors to hold points for closed polygon shading
-    std::vector<juce::Point<float>> inPointsTop, inPointsBottom;
-    std::vector<juce::Point<float>> outPointsTop, outPointsBottom;
-
-    for (int i = 0; i < numPoints; ++i)
+    if (lowCutX > startX)
     {
-        int histIdx = (writeIndex + i) % numPoints;
-        const auto& pt = history[histIdx];
+        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.09f));
+        g.fillRect(startX, startY, lowCutX - startX, height);
 
-        float x = displayArea.getX() + i * stepX;
+        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.5f));
+        g.drawVerticalLine(static_cast<int>(lowCutX), startY, startY + height);
+    }
 
-        // Apply gentle visual scaling and compression curve
-        float inAmp = juce::jlimit(0.0f, 1.2f, pt.inLevel) * halfHeight;
-        float outAmp = juce::jlimit(0.0f, 1.2f, pt.outLevel) * halfHeight;
-        float scAmp = juce::jlimit(0.0f, 1.2f, pt.scLevel) * halfHeight * 0.8f;
+    if (highCutX < startX + width)
+    {
+        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.09f));
+        g.fillRect(highCutX, startY, (startX + width) - highCutX, height);
 
-        inPointsTop.push_back({ x, centerY - inAmp });
-        inPointsBottom.push_back({ x, centerY + inAmp });
+        g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.5f));
+        g.drawVerticalLine(static_cast<int>(highCutX), startY, startY + height);
+    }
 
-        outPointsTop.push_back({ x, centerY - outAmp });
-        outPointsBottom.push_back({ x, centerY + outAmp });
+    // 5. Build Spectrum Paths
+    juce::Path inPath, outPath, scPath;
+    std::vector<juce::Point<float>> inPoints;
+    std::vector<juce::Point<float>> outPoints;
 
-        if (!started)
+    float bottomY = startY + height;
+
+    for (int i = 0; i < numSpectrumBins; ++i)
+    {
+        float freq = binFrequencies[i];
+        float x = mapFrequencyToX(freq, startX, width);
+
+        float yIn = mapDbToY(spectrumIn[i], startY, height);
+        float yOut = mapDbToY(spectrumOut[i], startY, height);
+        float ySC = mapDbToY(spectrumSC[i], startY, height);
+
+        inPoints.push_back({ x, yIn });
+        outPoints.push_back({ x, yOut });
+
+        if (i == 0)
         {
-            inPathTop.startNewSubPath(x, centerY - inAmp);
-            inPathBottom.startNewSubPath(x, centerY + inAmp);
-
-            outPathTop.startNewSubPath(x, centerY - outAmp);
-            outPathBottom.startNewSubPath(x, centerY + outAmp);
-
-            scPath.startNewSubPath(x, centerY - scAmp);
-            started = true;
+            inPath.startNewSubPath(x, yIn);
+            outPath.startNewSubPath(x, yOut);
+            scPath.startNewSubPath(x, ySC);
         }
         else
         {
-            inPathTop.lineTo(x, centerY - inAmp);
-            inPathBottom.lineTo(x, centerY + inAmp);
-
-            outPathTop.lineTo(x, centerY - outAmp);
-            outPathBottom.lineTo(x, centerY + outAmp);
-
-            scPath.lineTo(x, centerY - scAmp);
+            inPath.lineTo(x, yIn);
+            outPath.lineTo(x, yOut);
+            scPath.lineTo(x, ySC);
         }
     }
 
-    // 5. Render Ducking Cutout Area (Magenta shaded zone between Input and Output)
-    if (!inPointsTop.empty() && !outPointsTop.empty())
+    // 6. Shaded Ducking Delta Zone (Magenta carve-out between Input and Ducked Output Spectrum)
+    if (!inPoints.empty() && !outPoints.empty())
     {
-        // Top ducking zone
-        juce::Path duckZoneTop;
-        duckZoneTop.startNewSubPath(inPointsTop[0]);
-        for (size_t i = 1; i < inPointsTop.size(); ++i)
-            duckZoneTop.lineTo(inPointsTop[i]);
-        for (int i = static_cast<int>(outPointsTop.size()) - 1; i >= 0; --i)
-            duckZoneTop.lineTo(outPointsTop[i]);
-        duckZoneTop.closeSubPath();
-
-        // Bottom ducking zone
-        juce::Path duckZoneBottom;
-        duckZoneBottom.startNewSubPath(outPointsBottom[0]);
-        for (size_t i = 1; i < outPointsBottom.size(); ++i)
-            duckZoneBottom.lineTo(outPointsBottom[i]);
-        for (int i = static_cast<int>(inPointsBottom.size()) - 1; i >= 0; --i)
-            duckZoneBottom.lineTo(inPointsBottom[i]);
-        duckZoneBottom.closeSubPath();
+        juce::Path duckingShadePath;
+        duckingShadePath.startNewSubPath(inPoints[0]);
+        for (size_t i = 1; i < inPoints.size(); ++i)
+            duckingShadePath.lineTo(inPoints[i]);
+        for (int i = static_cast<int>(outPoints.size()) - 1; i >= 0; --i)
+            duckingShadePath.lineTo(outPoints[i]);
+        duckingShadePath.closeSubPath();
 
         g.setColour(CustomLookAndFeel::accentMagenta.withAlpha(0.35f));
-        g.fillPath(duckZoneTop);
-        g.fillPath(duckZoneBottom);
+        g.fillPath(duckingShadePath);
     }
 
-    // 6. Draw Un-ducked Input Waveform (Ghost outline)
-    g.setColour(juce::Colour::fromRGB(70, 90, 115).withAlpha(0.5f));
-    g.strokePath(inPathTop, juce::PathStrokeType(1.0f));
-    g.strokePath(inPathBottom, juce::PathStrokeType(1.0f));
+    // 7. Render Input Spectrum Silhouette (Ghost background)
+    juce::Path inFillPath = inPath;
+    inFillPath.lineTo(startX + width, bottomY);
+    inFillPath.lineTo(startX, bottomY);
+    inFillPath.closeSubPath();
 
-    // 7. Draw External Sidechain Pulse Waveform (Amber)
-    g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.4f));
-    g.strokePath(scPath, juce::PathStrokeType(1.2f));
+    g.setColour(juce::Colour::fromRGB(70, 95, 125).withAlpha(0.12f));
+    g.fillPath(inFillPath);
 
-    // 8. Draw Ducked Output Waveform (Crisp Cyan with Bloom)
-    g.setColour(CustomLookAndFeel::accentCyan.withAlpha(0.25f));
-    g.strokePath(outPathTop, juce::PathStrokeType(3.5f));
-    g.strokePath(outPathBottom, juce::PathStrokeType(3.5f));
+    g.setColour(juce::Colour::fromRGB(85, 110, 140).withAlpha(0.6f));
+    g.strokePath(inPath, juce::PathStrokeType(1.2f));
 
+    // 8. Render Sidechain Frequency Spectrum (Amber Glow)
+    juce::Path scFillPath = scPath;
+    scFillPath.lineTo(startX + width, bottomY);
+    scFillPath.lineTo(startX, bottomY);
+    scFillPath.closeSubPath();
+
+    g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.08f));
+    g.fillPath(scFillPath);
+
+    g.setColour(CustomLookAndFeel::accentAmber.withAlpha(0.85f));
+    g.strokePath(scPath, juce::PathStrokeType(1.5f));
+
+    // 9. Render Ducked Output Frequency Spectrum (Bright Cyan with Bloom)
+    juce::Path outFillPath = outPath;
+    outFillPath.lineTo(startX + width, bottomY);
+    outFillPath.lineTo(startX, bottomY);
+    outFillPath.closeSubPath();
+
+    juce::ColourGradient outGrad(CustomLookAndFeel::accentCyan.withAlpha(0.2f), 0.0f, startY + 20.0f,
+                                juce::Colours::transparentBlack, 0.0f, bottomY, false);
+    g.setGradientFill(outGrad);
+    g.fillPath(outFillPath);
+
+    // Cyan Bloom outer stroke
+    g.setColour(CustomLookAndFeel::accentCyan.withAlpha(0.3f));
+    g.strokePath(outPath, juce::PathStrokeType(3.5f));
+
+    // Cyan Core stroke
     g.setColour(CustomLookAndFeel::accentCyan);
-    g.strokePath(outPathTop, juce::PathStrokeType(1.5f));
-    g.strokePath(outPathBottom, juce::PathStrokeType(1.5f));
+    g.strokePath(outPath, juce::PathStrokeType(1.8f));
 
-    // 9. Legend Badges
-    float badgeY = displayArea.getY() + 6.0f;
-    float badgeX = displayArea.getX() + 8.0f;
+    // 10. Top Header Legend Badges
+    float badgeY = startY + 6.0f;
+    float badgeX = startX + 8.0f;
 
     auto drawBadge = [&](const juce::String& text, juce::Colour col) {
         g.setColour(col);
@@ -212,7 +330,7 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     };
 
     drawBadge("OUTPUT", CustomLookAndFeel::accentCyan);
-    drawBadge("DUCKED", CustomLookAndFeel::accentMagenta);
+    drawBadge("DUCKING", CustomLookAndFeel::accentMagenta);
     drawBadge("SIDECHAIN", CustomLookAndFeel::accentAmber);
     drawBadge("INPUT", juce::Colour::fromRGB(110, 130, 155));
 }

@@ -55,7 +55,8 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     addAndMakeVisible(bypassButton);
     bypassAttachment = std::make_unique<ButtonAttachment>(processorRef.getAPVTS(), "bypass", bypassButton);
 
-    // Set initial filter frequencies on visualizer
+    // Set initial filter frequencies & sample rate on visualizer
+    visualizer.setSampleRate(processorRef.getSampleRate());
     visualizer.setFilterFrequencies(static_cast<float>(lowCutSlider.getValue()),
                                     static_cast<float>(highCutSlider.getValue()));
 
