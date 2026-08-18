@@ -7,7 +7,7 @@
 class SideDuckerAudioProcessor;
 
 /**
- * Soothe 2-Style Interactive Frequency Sensitivity & Real-Time Reduction Graph
+ * FabFilter Pro-Q 4 Inspired Interactive Frequency Sensitivity & Real-Time Reduction Graph
  */
 class DuckingVisualizer : public juce::Component, public juce::Timer
 {
@@ -19,8 +19,11 @@ public:
     void resized() override;
     void timerCallback() override;
 
+    void mouseMove(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent& e) override;
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
 
@@ -28,7 +31,6 @@ public:
     void setSelectedBandIndex(int index);
 
     std::function<void(int)> onBandSelected;
-    std::function<void(int, float, float, float)> onNodeParamChanged; // band, freq, gain, q
 
     static const std::array<juce::Colour, 6> bandColours;
 
@@ -56,10 +58,11 @@ private:
     std::vector<float> spectrumSC;
     std::vector<float> binFrequencies;
 
-    // Smoothed 48-band reduction for the downward graph
+    // Smoothed 48-band reduction
     std::array<float, DuckingProcessor::NumBands> smoothedReduction;
 
-    int selectedBandIndex = 1; // Band 2 (GP1) by default
+    int selectedBandIndex = 0;
+    int hoveredBandIndex = -1;
     int draggingBandIndex = -1;
 
     std::vector<AudioVisualizerFifo::VisualizerSample> readBuffer;

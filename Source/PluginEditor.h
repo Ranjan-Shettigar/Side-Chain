@@ -36,23 +36,28 @@ private:
     juce::Label releaseLabel;
     juce::Label outputGainLabel;
 
-    // Band Selector Pills (1 to 6)
+    // Band Selector Pill Buttons (1 to 6)
     std::array<juce::TextButton, 6> bandSelectButtons;
 
-    // Dedicated Controls for currently selected band
+    // Dedicated Pro-Q 4 Controls for Selected Band
     juce::Label bandTitleLabel;
-    juce::ComboBox bandTypeComboBox;
+    juce::ComboBox bandShapeComboBox;
+    juce::ComboBox bandSlopeComboBox;
+    juce::ComboBox bandStereoComboBox;
     juce::Slider bandFreqSlider;
     juce::Slider bandGainSlider;
     juce::Slider bandQSlider;
+    juce::ToggleButton bandSoloButton;
     juce::ToggleButton bandBypassButton;
 
-    juce::Label bandTypeLabel;
+    juce::Label bandShapeLabel;
+    juce::Label bandSlopeLabel;
+    juce::Label bandStereoLabel;
     juce::Label bandFreqLabel;
     juce::Label bandGainLabel;
     juce::Label bandQLabel;
 
-    int currentSelectedBand = 1; // 0 = Band 1 (Low Cut), 1..4 = GP1..GP4, 5 = Band 6 (High Cut)
+    int currentSelectedBand = 0;
 
     // APVTS Attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -67,11 +72,14 @@ private:
     std::unique_ptr<ButtonAttachment> bypassAttachment;
 
     // Dynamic attachments for selected band
-    std::unique_ptr<ComboBoxAttachment> selectedTypeAttachment;
+    std::unique_ptr<ComboBoxAttachment> selectedShapeAttachment;
+    std::unique_ptr<ComboBoxAttachment> selectedSlopeAttachment;
+    std::unique_ptr<ComboBoxAttachment> selectedStereoAttachment;
     std::unique_ptr<SliderAttachment> selectedFreqAttachment;
     std::unique_ptr<SliderAttachment> selectedGainAttachment;
     std::unique_ptr<SliderAttachment> selectedQAttachment;
     std::unique_ptr<ButtonAttachment> selectedBypassAttachment;
+    std::unique_ptr<ButtonAttachment> selectedSoloAttachment;
 
     void setupRotaryControl(juce::Slider& slider, juce::Label& label, const juce::String& text, const juce::String& suffix);
     void updateSelectedBandUI(int bandIndex);

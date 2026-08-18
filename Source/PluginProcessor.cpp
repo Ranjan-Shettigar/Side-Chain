@@ -15,24 +15,19 @@ SideDuckerAudioProcessor::SideDuckerAudioProcessor()
     scListenParam   = apvts.getRawParameterValue("scListen");
     bypassParam     = apvts.getRawParameterValue("bypass");
 
-    b1_freqParam    = apvts.getRawParameterValue("b1_freq");
-    b1_slopeParam   = apvts.getRawParameterValue("b1_slope");
-    b1_bypassParam  = apvts.getRawParameterValue("b1_bypass");
-
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 6; ++i)
     {
-        int bandNum = i + 2;
+        int bandNum = i + 1;
         juce::String prefix = "b" + juce::String(bandNum) + "_";
-        gpBandParams[i].typeParam   = apvts.getRawParameterValue(prefix + "type");
-        gpBandParams[i].freqParam   = apvts.getRawParameterValue(prefix + "freq");
-        gpBandParams[i].gainParam   = apvts.getRawParameterValue(prefix + "gain");
-        gpBandParams[i].qParam      = apvts.getRawParameterValue(prefix + "q");
-        gpBandParams[i].bypassParam = apvts.getRawParameterValue(prefix + "bypass");
+        bandParams[i].shapeParam   = apvts.getRawParameterValue(prefix + "shape");
+        bandParams[i].slopeParam   = apvts.getRawParameterValue(prefix + "slope");
+        bandParams[i].stereoParam  = apvts.getRawParameterValue(prefix + "stereo");
+        bandParams[i].freqParam    = apvts.getRawParameterValue(prefix + "freq");
+        bandParams[i].gainParam    = apvts.getRawParameterValue(prefix + "gain");
+        bandParams[i].qParam       = apvts.getRawParameterValue(prefix + "q");
+        bandParams[i].bypassParam  = apvts.getRawParameterValue(prefix + "bypass");
+        bandParams[i].soloParam    = apvts.getRawParameterValue(prefix + "solo");
     }
-
-    b6_freqParam    = apvts.getRawParameterValue("b6_freq");
-    b6_slopeParam   = apvts.getRawParameterValue("b6_slope");
-    b6_bypassParam  = apvts.getRawParameterValue("b6_bypass");
 }
 
 SideDuckerAudioProcessor::~SideDuckerAudioProcessor()
@@ -79,33 +74,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout SideDuckerAudioProcessor::cr
     params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID("scListen", 1), "SC Listen", false));
     params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID("bypass", 1), "Bypass", false));
 
-    const juce::StringArray slopeChoices = { "6 dB/oct", "12 dB/oct", "24 dB/oct", "48 dB/oct" };
-    const juce::StringArray typeChoices = { "Bell", "Low Shelf", "High Shelf", "Band Shelf", "Notch", "Tilt" };
+    const juce::StringArray shapeChoices = { "Bell", "Low Cut", "High Cut", "Low Shelf", "High Shelf", "Notch", "Band Pass", "Tilt Shelf", "Flat Tilt" };
+    const juce::StringArray slopeChoices = { "6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "30 dB/oct", "36 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct", "Brickwall" };
+    const juce::StringArray stereoChoices = { "Stereo", "Left", "Right", "Mid", "Side" };
 
-    // Band 1 (Low Cut)
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID("b1_freq", 1), "B1 Low Cut Freq",
-        juce::NormalisableRange<float>(20.0f, 1000.0f, 1.0f, 0.3f), 30.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float val, int) { return juce::String(val, 0) + " Hz"; }
-    ));
-    params.push_back(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID("b1_slope", 1), "B1 Slope", slopeChoices, 1 // 12 dB/oct
-    ));
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID("b1_bypass", 1), "B1 Bypass", false
-    ));
+    const std::array<float, 6> defaultFreqs = { 30.0f, 120.0f, 380.0f, 1500.0f, 6000.0f, 18000.0f };
+    const std::array<int, 6> defaultShapes = { 1, 0, 0, 0, 0, 2 }; // Band 1: Low Cut (1), Bands 2-5: Bell (0), Band 6: High Cut (2)
 
-    // Bands 2 - 5 (General Purpose)
-    const std::array<float, 4> defaultFreqs = { 120.0f, 380.0f, 1500.0f, 6000.0f };
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 6; ++i)
     {
-        int bandNum = i + 2;
+        int bandNum = i + 1;
         juce::String prefix = "b" + juce::String(bandNum) + "_";
         juce::String bandName = "Band " + juce::String(bandNum) + " ";
 
         params.push_back(std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID(prefix + "type", 1), bandName + "Type", typeChoices, 0 // Bell
+            juce::ParameterID(prefix + "shape", 1), bandName + "Shape", shapeChoices, defaultShapes[i]
+        ));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID(prefix + "slope", 1), bandName + "Slope", slopeChoices, 1 // 12 dB/oct
+        ));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID(prefix + "stereo", 1), bandName + "Placement", stereoChoices, 0 // Stereo
         ));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID(prefix + "freq", 1), bandName + "Freq",
@@ -128,21 +117,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SideDuckerAudioProcessor::cr
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID(prefix + "bypass", 1), bandName + "Bypass", false
         ));
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID(prefix + "solo", 1), bandName + "Solo", false
+        ));
     }
-
-    // Band 6 (High Cut)
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID("b6_freq", 1), "B6 High Cut Freq",
-        juce::NormalisableRange<float>(500.0f, 20000.0f, 1.0f, 0.3f), 18000.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float val, int) { return val >= 1000.0f ? juce::String(val / 1000.0f, 2) + " kHz" : juce::String(val, 0) + " Hz"; }
-    ));
-    params.push_back(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID("b6_slope", 1), "B6 Slope", slopeChoices, 1 // 12 dB/oct
-    ));
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID("b6_bypass", 1), "B6 Bypass", false
-    ));
 
     return { params.begin(), params.end() };
 }
@@ -213,26 +191,17 @@ void SideDuckerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     // Collect 6 parametric band configs
     std::array<DuckingProcessor::ParametricBandConfig, 6> bandConfigs;
 
-    // Band 1 (Low Cut)
-    bandConfigs[0].freq     = b1_freqParam ? b1_freqParam->load() : 30.0f;
-    bandConfigs[0].slope    = static_cast<DuckingProcessor::SlopeType>(b1_slopeParam ? static_cast<int>(b1_slopeParam->load()) : 1);
-    bandConfigs[0].bypassed = b1_bypassParam ? b1_bypassParam->load() > 0.5f : false;
-
-    // Bands 2-5 (GP)
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 6; ++i)
     {
-        int bandIdx = i + 1;
-        bandConfigs[bandIdx].type     = static_cast<DuckingProcessor::BandType>(gpBandParams[i].typeParam ? static_cast<int>(gpBandParams[i].typeParam->load()) : 0);
-        bandConfigs[bandIdx].freq     = gpBandParams[i].freqParam ? gpBandParams[i].freqParam->load() : 1000.0f;
-        bandConfigs[bandIdx].gainDb   = gpBandParams[i].gainParam ? gpBandParams[i].gainParam->load() : 0.0f;
-        bandConfigs[bandIdx].q        = gpBandParams[i].qParam ? gpBandParams[i].qParam->load() : 1.4f;
-        bandConfigs[bandIdx].bypassed = gpBandParams[i].bypassParam ? gpBandParams[i].bypassParam->load() > 0.5f : false;
+        bandConfigs[i].shape           = static_cast<DuckingProcessor::FilterShape>(bandParams[i].shapeParam ? static_cast<int>(bandParams[i].shapeParam->load()) : 0);
+        bandConfigs[i].slope           = static_cast<DuckingProcessor::FilterSlope>(bandParams[i].slopeParam ? static_cast<int>(bandParams[i].slopeParam->load()) : 1);
+        bandConfigs[i].stereoPlacement = static_cast<DuckingProcessor::StereoPlacement>(bandParams[i].stereoParam ? static_cast<int>(bandParams[i].stereoParam->load()) : 0);
+        bandConfigs[i].freq            = bandParams[i].freqParam ? bandParams[i].freqParam->load() : 1000.0f;
+        bandConfigs[i].gainDb          = bandParams[i].gainParam ? bandParams[i].gainParam->load() : 0.0f;
+        bandConfigs[i].q               = bandParams[i].qParam ? bandParams[i].qParam->load() : 1.4f;
+        bandConfigs[i].bypassed        = bandParams[i].bypassParam ? bandParams[i].bypassParam->load() > 0.5f : false;
+        bandConfigs[i].solo            = bandParams[i].soloParam ? bandParams[i].soloParam->load() > 0.5f : false;
     }
-
-    // Band 6 (High Cut)
-    bandConfigs[5].freq     = b6_freqParam ? b6_freqParam->load() : 18000.0f;
-    bandConfigs[5].slope    = static_cast<DuckingProcessor::SlopeType>(b6_slopeParam ? static_cast<int>(b6_slopeParam->load()) : 1);
-    bandConfigs[5].bypassed = b6_bypassParam ? b6_bypassParam->load() > 0.5f : false;
 
     duckingProcessor.setParameters(amount, attack, release, outputGain, scListen, bypass, bandConfigs);
 

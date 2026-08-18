@@ -54,24 +54,19 @@ private:
     std::atomic<float>* scListenParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
 
-    // Band 1-6 parameter pointers
-    std::atomic<float>* b1_freqParam = nullptr;
-    std::atomic<float>* b1_slopeParam = nullptr;
-    std::atomic<float>* b1_bypassParam = nullptr;
-
-    struct GPBandParams
+    // 6 Parametric Band parameter pointers
+    struct BandParamPointers
     {
-        std::atomic<float>* typeParam = nullptr;
+        std::atomic<float>* shapeParam = nullptr;
+        std::atomic<float>* slopeParam = nullptr;
+        std::atomic<float>* stereoParam = nullptr;
         std::atomic<float>* freqParam = nullptr;
         std::atomic<float>* gainParam = nullptr;
         std::atomic<float>* qParam = nullptr;
         std::atomic<float>* bypassParam = nullptr;
+        std::atomic<float>* soloParam = nullptr;
     };
-    std::array<GPBandParams, 4> gpBandParams;
-
-    std::atomic<float>* b6_freqParam = nullptr;
-    std::atomic<float>* b6_slopeParam = nullptr;
-    std::atomic<float>* b6_bypassParam = nullptr;
+    std::array<BandParamPointers, 6> bandParams;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SideDuckerAudioProcessor)
 };

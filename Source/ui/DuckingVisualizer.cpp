@@ -2,14 +2,14 @@
 #include "CustomLookAndFeel.h"
 #include "../PluginProcessor.h"
 
-// Google Material Design 3 Tonal Node Palette
+// Google Material Design 3 / Pro-Q Tonal Node Palette
 const std::array<juce::Colour, 6> DuckingVisualizer::bandColours = {
-    juce::Colour::fromRGB(120, 217, 236), // Band 1: M3 Cyan (#78D9EC)
-    juce::Colour::fromRGB(249, 214, 120), // Band 2: M3 Amber (#F9D678)
-    juce::Colour::fromRGB(245, 162, 122), // Band 3: M3 Peach/Orange (#F5A27A)
-    juce::Colour::fromRGB(244, 120, 136), // Band 4: M3 Crimson/Rose (#F47888)
-    juce::Colour::fromRGB(197, 138, 249), // Band 5: M3 Lavender/Purple (#C58AF9)
-    juce::Colour::fromRGB(248, 134, 184)  // Band 6: M3 Pink (#F886B8)
+    juce::Colour::fromRGB(120, 217, 236), // Band 1: Cyan (#78D9EC)
+    juce::Colour::fromRGB(249, 214, 120), // Band 2: Amber (#F9D678)
+    juce::Colour::fromRGB(245, 162, 122), // Band 3: Peach (#F5A27A)
+    juce::Colour::fromRGB(244, 120, 136), // Band 4: Rose (#F47888)
+    juce::Colour::fromRGB(197, 138, 249), // Band 5: Lavender (#C58AF9)
+    juce::Colour::fromRGB(248, 134, 184)  // Band 6: Pink (#F886B8)
 };
 
 DuckingVisualizer::DuckingVisualizer(SideDuckerAudioProcessor& processor)
@@ -190,45 +190,59 @@ float DuckingVisualizer::mapYToDb(float y, float topY, float height) const
 juce::Point<float> DuckingVisualizer::getNodePosition(int bandIdx, float startX, float startY, float width, float height) const
 {
     auto& apvts = processorRef.getAPVTS();
+    int bNum = bandIdx + 1;
+    juce::String prefix = "b" + juce::String(bNum) + "_";
+
     float freq = 1000.0f;
     float gain = 0.0f;
 
-    if (bandIdx == 0) // Band 1 Low Cut
-    {
-        if (auto* p = apvts.getRawParameterValue("b1_freq")) freq = p->load();
+    if (auto* pF = apvts.getRawParameterValue(prefix + "freq")) freq = pF->load();
+    if (auto* pG = apvts.getRawParameterValue(prefix + "gain")) gain = pG->load();
+
+    int shape = 0;
+    if (auto* pS = apvts.getRawParameterValue(prefix + "shape")) shape = static_cast<int>(pS->load());
+
+    // Cut bands (LowCut = 1, HighCut = 2) have node handle sitting at 0 dB line
+    if (shape == 1 || shape == 2)
         gain = 0.0f;
-    }
-    else if (bandIdx == 5) // Band 6 High Cut
-    {
-        if (auto* p = apvts.getRawParameterValue("b6_freq")) freq = p->load();
-        gain = 0.0f;
-    }
-    else // Bands 2-5
-    {
-        int bNum = bandIdx + 1;
-        juce::String prefix = "b" + juce::String(bNum) + "_";
-        if (auto* p = apvts.getRawParameterValue(prefix + "freq")) freq = p->load();
-        if (auto* p = apvts.getRawParameterValue(prefix + "gain")) gain = p->load();
-    }
 
     return { mapFrequencyToX(freq, startX, width), mapDbToY(gain, startY, height) };
 }
 
 int DuckingVisualizer::getBandNodeAtPosition(juce::Point<float> pos) const
 {
-    auto displayArea = getLocalBounds().toFloat().reduced(8.0f);
+    auto displayArea = getLocalBounds().toFloat().reduced(12.0f);
     float startX = displayArea.getX();
     float startY = displayArea.getY();
     float width = displayArea.getWidth();
-    float height = displayArea.getHeight();
+    float height = displayArea.getHeight() - 16.0f;
 
     for (int i = 0; i < 6; ++i)
     {
         auto nodePos = getNodePosition(i, startX, startY, width, height);
-        if (pos.getDistanceFrom(nodePos) <= 14.0f)
+        if (pos.getDistanceFrom(nodePos) <= 15.0f)
             return i;
     }
     return -1;
+}
+
+void DuckingVisualizer::mouseMove(const juce::MouseEvent& e)
+{
+    int hit = getBandNodeAtPosition(e.position);
+    if (hit != hoveredBandIndex)
+    {
+        hoveredBandIndex = hit;
+        repaint();
+    }
+}
+
+void DuckingVisualizer::mouseExit(const juce::MouseEvent&)
+{
+    if (hoveredBandIndex != -1)
+    {
+        hoveredBandIndex = -1;
+        repaint();
+    }
 }
 
 void DuckingVisualizer::mouseDown(const juce::MouseEvent& e)
@@ -248,33 +262,27 @@ void DuckingVisualizer::mouseDrag(const juce::MouseEvent& e)
 {
     if (draggingBandIndex >= 0)
     {
-        auto displayArea = getLocalBounds().toFloat().reduced(8.0f);
-        float newFreq = mapXToFrequency(e.position.x, displayArea.getX(), displayArea.getWidth());
-        float newGain = mapYToDb(e.position.y, displayArea.getY(), displayArea.getHeight());
+        auto displayArea = getLocalBounds().toFloat().reduced(12.0f);
+        float width = displayArea.getWidth();
+        float height = displayArea.getHeight() - 16.0f;
+
+        float newFreq = mapXToFrequency(e.position.x, displayArea.getX(), width);
+        float newGain = mapYToDb(e.position.y, displayArea.getY(), height);
         newGain = juce::jlimit(-18.0f, 18.0f, newGain);
+        newFreq = juce::jlimit(20.0f, 20000.0f, newFreq);
 
         auto& apvts = processorRef.getAPVTS();
+        int bNum = draggingBandIndex + 1;
+        juce::String prefix = "b" + juce::String(bNum) + "_";
 
-        if (draggingBandIndex == 0) // Low Cut
-        {
-            newFreq = juce::jlimit(20.0f, 1000.0f, newFreq);
-            if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("b1_freq")))
-                *p = newFreq;
-        }
-        else if (draggingBandIndex == 5) // High Cut
-        {
-            newFreq = juce::jlimit(500.0f, 20000.0f, newFreq);
-            if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("b6_freq")))
-                *p = newFreq;
-        }
-        else // Bands 2-5
-        {
-            int bNum = draggingBandIndex + 1;
-            juce::String prefix = "b" + juce::String(bNum) + "_";
-            newFreq = juce::jlimit(20.0f, 20000.0f, newFreq);
+        if (auto* pF = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "freq")))
+            *pF = newFreq;
 
-            if (auto* pF = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "freq")))
-                *pF = newFreq;
+        int shape = 0;
+        if (auto* pS = apvts.getRawParameterValue(prefix + "shape")) shape = static_cast<int>(pS->load());
+
+        if (shape != 1 && shape != 2) // Cut filters don't have gain
+        {
             if (auto* pG = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "gain")))
                 *pG = newGain;
         }
@@ -283,10 +291,16 @@ void DuckingVisualizer::mouseDrag(const juce::MouseEvent& e)
     }
 }
 
+void DuckingVisualizer::mouseUp(const juce::MouseEvent&)
+{
+    draggingBandIndex = -1;
+    repaint();
+}
+
 void DuckingVisualizer::mouseDoubleClick(const juce::MouseEvent& e)
 {
     int hitBand = getBandNodeAtPosition(e.position);
-    if (hitBand >= 1 && hitBand <= 4)
+    if (hitBand >= 0)
     {
         int bNum = hitBand + 1;
         juce::String prefix = "b" + juce::String(bNum) + "_";
@@ -302,28 +316,32 @@ void DuckingVisualizer::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
     if (band < 0)
         band = selectedBandIndex;
 
-    if (band >= 1 && band <= 4)
+    int bNum = band + 1;
+    juce::String prefix = "b" + juce::String(bNum) + "_";
+    auto& apvts = processorRef.getAPVTS();
+
+    int shape = 0;
+    if (auto* pS = apvts.getRawParameterValue(prefix + "shape")) shape = static_cast<int>(pS->load());
+
+    if (shape == 1 || shape == 2) // Slope for Cut filters
     {
-        int bNum = band + 1;
-        juce::String prefix = "b" + juce::String(bNum) + "_";
-        if (auto* pQ = dynamic_cast<juce::AudioParameterFloat*>(processorRef.getAPVTS().getParameter(prefix + "q")))
+        if (auto* pSlope = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(prefix + "slope")))
+        {
+            int curSlope = pSlope->getIndex();
+            if (wheel.deltaY > 0 && curSlope < 9)
+                *pSlope = curSlope + 1;
+            else if (wheel.deltaY < 0 && curSlope > 0)
+                *pSlope = curSlope - 1;
+            repaint();
+        }
+    }
+    else // Q for parametric filters
+    {
+        if (auto* pQ = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "q")))
         {
             float curQ = pQ->get();
             float delta = wheel.deltaY > 0 ? 1.15f : 0.87f;
             *pQ = juce::jlimit(0.1f, 10.0f, curQ * delta);
-            repaint();
-        }
-    }
-    else if (band == 0 || band == 5)
-    {
-        juce::String paramId = (band == 0) ? "b1_slope" : "b6_slope";
-        if (auto* pS = dynamic_cast<juce::AudioParameterChoice*>(processorRef.getAPVTS().getParameter(paramId)))
-        {
-            int curSlope = pS->getIndex();
-            if (wheel.deltaY > 0 && curSlope < 3)
-                *pS = curSlope + 1;
-            else if (wheel.deltaY < 0 && curSlope > 0)
-                *pS = curSlope - 1;
             repaint();
         }
     }
@@ -333,7 +351,7 @@ void DuckingVisualizer::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // 1. M3 Surface Canvas (Large 16px Rounded Container)
+    // 1. M3 Surface Canvas
     g.setColour(CustomLookAndFeel::m3SurfaceContainerLowest);
     g.fillRoundedRectangle(bounds, 16.0f);
     g.setColour(CustomLookAndFeel::m3OutlineVariant);
@@ -343,9 +361,9 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     float startX = displayArea.getX();
     float startY = displayArea.getY();
     float width = displayArea.getWidth();
-    float height = displayArea.getHeight();
+    float height = displayArea.getHeight() - 16.0f;
 
-    // 2. Frequency Grid Lines & Labels (M3 Minimalist Typography)
+    // 2. Frequency Grid Lines & Labels
     const std::vector<std::pair<float, juce::String>> freqMarkers = {
         { 50.0f, "50" }, { 100.0f, "100" }, { 250.0f, "250" }, { 500.0f, "500" },
         { 1000.0f, "1k" }, { 2500.0f, "2.5k" }, { 5000.0f, "5k" }, { 10000.0f, "10k" }, { 20000.0f, "20k" }
@@ -355,11 +373,12 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     for (const auto& [freq, label] : freqMarkers)
     {
         float x = mapFrequencyToX(freq, startX, width);
-        g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.45f));
+        g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.35f));
         g.drawVerticalLine(static_cast<int>(x), startY, startY + height);
 
         g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.6f));
-        g.drawText(label, static_cast<int>(x - 15.0f), static_cast<int>(startY + height - 12.0f), 30, 12, juce::Justification::centred);
+        int textX = (freq >= 20000.0f) ? static_cast<int>(x - 22.0f) : static_cast<int>(x - 14.0f);
+        g.drawText(label, textX, static_cast<int>(startY + height + 2.0f), 28, 12, juce::Justification::centred);
     }
 
     // 3. dB Grid Lines (+18, +12, +6, 0 dB baseline, -6, -12, -18, -24 dB)
@@ -371,13 +390,12 @@ void DuckingVisualizer::paint(juce::Graphics& g)
         float y = mapDbToY(db, startY, height);
         if (std::abs(db) < 0.01f)
         {
-            // 0 dB Baseline (M3 Highlighted center line)
             g.setColour(CustomLookAndFeel::m3Outline.withAlpha(0.6f));
             g.drawHorizontalLine(static_cast<int>(y), startX, startX + width);
         }
         else
         {
-            g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.3f));
+            g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.25f));
             g.drawHorizontalLine(static_cast<int>(y), startX, startX + width);
         }
 
@@ -386,7 +404,7 @@ void DuckingVisualizer::paint(juce::Graphics& g)
         g.drawText(dbText, static_cast<int>(startX + width - 36.0f), static_cast<int>(y - 10.0f), 34, 10, juce::Justification::right);
     }
 
-    // 4. Ambient Background FFT Spectrum (Sidechain energy in subtle M3 Amber)
+    // 4. Ambient Sidechain FFT Spectrum
     juce::Path scFftPath;
     for (int i = 0; i < numSpectrumBins; ++i)
     {
@@ -404,7 +422,7 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     g.setColour(CustomLookAndFeel::m3Secondary.withAlpha(0.06f));
     g.fillPath(scFftPath);
 
-    // 5. Soothe 2-Style Downward Dynamic Reduction Graph (M3 Coral/Pink #F48FB1)
+    // 5. Downward Dynamic Reduction Graph across 48 bands (M3 Coral #F48FB1)
     juce::Path reductionPath;
     reductionPath.startNewSubPath(startX, zeroY);
 
@@ -420,7 +438,6 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     reductionPath.lineTo(startX + width, zeroY);
     reductionPath.closeSubPath();
 
-    // M3 Tonal Downward Gradient Fill
     juce::ColourGradient redGrad(CustomLookAndFeel::m3Tertiary.withAlpha(0.38f), 0.0f, zeroY,
                                 CustomLookAndFeel::m3Tertiary.withAlpha(0.03f), 0.0f, startY + height, false);
     g.setGradientFill(redGrad);
@@ -429,7 +446,7 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     g.setColour(CustomLookAndFeel::m3Tertiary);
     g.strokePath(reductionPath, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved));
 
-    // 6. Interactive 6-Band Sensitivity EQ Curve (M3 Primary Blue #A8C7FA)
+    // 6. Pro-Q 4 Style Interactive Sensitivity Curve
     juce::Path sensCurvePath;
     for (int i = 0; i < numSpectrumBins; ++i)
     {
@@ -443,39 +460,101 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     }
 
     g.setColour(CustomLookAndFeel::m3Primary);
-    g.strokePath(sensCurvePath, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved));
+    g.strokePath(sensCurvePath, juce::PathStrokeType(2.2f, juce::PathStrokeType::curved));
 
-    // 7. Interactive Draggable M3 Nodes (Bands 1 to 6)
+    // 7. Interactive Draggable M3 / Pro-Q Nodes (1 to 6)
+    int activeHudBand = (draggingBandIndex >= 0) ? draggingBandIndex : hoveredBandIndex;
+    if (activeHudBand < 0)
+        activeHudBand = selectedBandIndex;
+
+    juce::Point<float> activeHudPos;
+
     for (int i = 0; i < 6; ++i)
     {
         auto nodePos = getNodePosition(i, startX, startY, width, height);
         juce::Colour col = bandColours[i];
         bool isSelected = (i == selectedBandIndex);
+        bool isHovered = (i == hoveredBandIndex);
 
-        // M3 Elevation / Selection Halo
-        if (isSelected)
+        if (i == activeHudBand)
+            activeHudPos = nodePos;
+
+        // Selection / Hover Halo
+        if (isSelected || isHovered)
         {
-            g.setColour(col.withAlpha(0.25f));
+            g.setColour(col.withAlpha(isSelected ? 0.25f : 0.15f));
             g.fillEllipse(nodePos.x - 15.0f, nodePos.y - 15.0f, 30.0f, 30.0f);
             g.setColour(col.withAlpha(0.8f));
             g.drawEllipse(nodePos.x - 15.0f, nodePos.y - 15.0f, 30.0f, 30.0f, 1.5f);
         }
 
-        // Outer Dark Border
+        // Dark Border & Node Body
         g.setColour(CustomLookAndFeel::m3SurfaceContainerLowest);
         g.fillEllipse(nodePos.x - 10.0f, nodePos.y - 10.0f, 20.0f, 20.0f);
 
-        // M3 Tonal Node Body
         g.setColour(col);
         g.fillEllipse(nodePos.x - 8.0f, nodePos.y - 8.0f, 16.0f, 16.0f);
 
-        // Node Number (M3 On-Color Text)
+        // Node Number
         g.setColour(CustomLookAndFeel::m3Surface);
         g.setFont(juce::Font(10.0f, juce::Font::bold));
         g.drawText(juce::String(i + 1), static_cast<int>(nodePos.x - 8.0f), static_cast<int>(nodePos.y - 8.0f), 16, 16, juce::Justification::centred);
     }
 
-    // 8. Header Badges (M3 Clean Pill Badges)
+    // 8. Pro-Q 4 Floating HUD Tooltip on Hover / Drag / Active Node
+    if (activeHudBand >= 0 && activeHudBand < 6)
+    {
+        int bNum = activeHudBand + 1;
+        juce::String prefix = "b" + juce::String(bNum) + "_";
+        auto& apvts = processorRef.getAPVTS();
+
+        float freq = 1000.0f;
+        float gain = 0.0f;
+        float q = 1.4f;
+        int shape = 0;
+        int slope = 1;
+        int stereo = 0;
+
+        if (auto* p = apvts.getRawParameterValue(prefix + "freq")) freq = p->load();
+        if (auto* p = apvts.getRawParameterValue(prefix + "gain")) gain = p->load();
+        if (auto* p = apvts.getRawParameterValue(prefix + "q")) q = p->load();
+        if (auto* p = apvts.getRawParameterValue(prefix + "shape")) shape = static_cast<int>(p->load());
+        if (auto* p = apvts.getRawParameterValue(prefix + "slope")) slope = static_cast<int>(p->load());
+        if (auto* p = apvts.getRawParameterValue(prefix + "stereo")) stereo = static_cast<int>(p->load());
+
+        const juce::StringArray shapeNames = { "Bell", "Low Cut", "High Cut", "Low Shelf", "High Shelf", "Notch", "Band Pass", "Tilt Shelf", "Flat Tilt" };
+        const juce::StringArray slopeNames = { "6dB", "12dB", "18dB", "24dB", "30dB", "36dB", "48dB", "72dB", "96dB", "Brickwall" };
+        const juce::StringArray stereoNames = { "Stereo", "Left", "Right", "Mid", "Side" };
+
+        juce::String freqStr = freq >= 1000.0f ? juce::String(freq / 1000.0f, 2) + " kHz" : juce::String(freq, 0) + " Hz";
+        juce::String hudText = "BAND " + juce::String(bNum) + " • " + shapeNames[shape].toUpperCase() + " • " + freqStr;
+
+        if (shape == 1 || shape == 2)
+            hudText += " • " + slopeNames[slope];
+        else
+            hudText += " • " + juce::String(gain > 0 ? "+" : "") + juce::String(gain, 1) + " dB • Q " + juce::String(q, 2);
+
+        hudText += " • " + stereoNames[stereo].toUpperCase();
+
+        // Draw Floating HUD Pill
+        int hudW = 280;
+        int hudH = 22;
+        int hudX = juce::jlimit(static_cast<int>(startX + 8.0f), static_cast<int>(startX + width - hudW - 8.0f), static_cast<int>(activeHudPos.x - hudW / 2));
+        int hudY = (activeHudPos.y > startY + 40.0f) ? static_cast<int>(activeHudPos.y - 36.0f) : static_cast<int>(activeHudPos.y + 20.0f);
+
+        auto hudRect = juce::Rectangle<float>(static_cast<float>(hudX), static_cast<float>(hudY), static_cast<float>(hudW), static_cast<float>(hudH));
+        g.setColour(CustomLookAndFeel::m3SurfaceContainerHigh.withAlpha(0.92f));
+        g.fillRoundedRectangle(hudRect, 11.0f);
+
+        g.setColour(bandColours[activeHudBand].withAlpha(0.7f));
+        g.drawRoundedRectangle(hudRect, 11.0f, 1.0f);
+
+        g.setColour(CustomLookAndFeel::m3OnSurface);
+        g.setFont(juce::Font(10.0f, juce::Font::bold));
+        g.drawText(hudText, hudRect.toNearestInt(), juce::Justification::centred);
+    }
+
+    // 9. Header Badges
     float badgeY = startY + 6.0f;
     float badgeX = startX + 8.0f;
 

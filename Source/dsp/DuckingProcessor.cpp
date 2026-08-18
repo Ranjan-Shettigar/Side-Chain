@@ -9,9 +9,9 @@ DuckingProcessor::DuckingProcessor()
 
 void DuckingProcessor::initializeBands()
 {
-    // 48 log-spaced center frequencies from ~22 Hz to ~19,000 Hz
-    const float minLog = std::log10(22.0f);
-    const float maxLog = std::log10(19000.0f);
+    // 48 log-spaced center frequencies from ~20 Hz to ~20,000 Hz
+    const float minLog = std::log10(20.0f);
+    const float maxLog = std::log10(20000.0f);
 
     for (int i = 0; i < NumBands; ++i)
     {
@@ -19,9 +19,10 @@ void DuckingProcessor::initializeBands()
         float logFreq = minLog + norm * (maxLog - minLog);
         bands[i].centerFreq = std::pow(10.0f, logFreq);
         bands[i].q = 2.4f; // 48-band overlapping Q
-        bands[i].envelopeState = 0.0f;
-        bands[i].currentGainDb = 0.0f;
-        bands[i].targetGainDb = 0.0f;
+        bands[i].envelopeStateL = 0.0f;
+        bands[i].envelopeStateR = 0.0f;
+        bands[i].currentGainDbL = 0.0f;
+        bands[i].currentGainDbR = 0.0f;
     }
 }
 
@@ -31,6 +32,7 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
     samplesPerBlock = spec.maximumBlockSize > 0 ? static_cast<int>(spec.maximumBlockSize) : 512;
 
     sidechainCopyBuffer.setSize(2, samplesPerBlock);
+    soloBuffer.setSize(2, samplesPerBlock);
 
     smoothedAmount.reset(sampleRate, 0.02);
     smoothedOutputGain.reset(sampleRate, 0.02);
@@ -49,8 +51,10 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
         bands[i].scFilterR.reset();
         bands[i].mainEqL.reset();
         bands[i].mainEqR.reset();
-        bands[i].envelopeState = 0.0f;
-        bands[i].currentGainDb = 0.0f;
+        bands[i].envelopeStateL = 0.0f;
+        bands[i].envelopeStateR = 0.0f;
+        bands[i].currentGainDbL = 0.0f;
+        bands[i].currentGainDbR = 0.0f;
     }
 
     reset();
@@ -64,8 +68,10 @@ void DuckingProcessor::reset()
         bands[i].scFilterR.reset();
         bands[i].mainEqL.reset();
         bands[i].mainEqR.reset();
-        bands[i].envelopeState = 0.0f;
-        bands[i].currentGainDb = 0.0f;
+        bands[i].envelopeStateL = 0.0f;
+        bands[i].envelopeStateR = 0.0f;
+        bands[i].currentGainDbL = 0.0f;
+        bands[i].currentGainDbR = 0.0f;
         bandReductionTelemetry[i].store(0.0f);
     }
 
@@ -83,7 +89,7 @@ void DuckingProcessor::updateCoefficients()
     releaseCoeff = std::exp(-1.0f / (releaseSec * static_cast<float>(sampleRate)));
 }
 
-float DuckingProcessor::evaluateSensitivityDb(float freq) const
+float DuckingProcessor::evaluateSensitivityDb(float freq, int channel) const
 {
     float totalDb = 0.0f;
 
@@ -93,86 +99,105 @@ float DuckingProcessor::evaluateSensitivityDb(float freq) const
         if (band.bypassed)
             continue;
 
+        // Check Stereo Placement matching
+        if (band.stereoPlacement == StereoPlacement::LeftOnly && channel != 0)
+            continue;
+        if (band.stereoPlacement == StereoPlacement::RightOnly && channel != 1)
+            continue;
+
         float f0 = juce::jlimit(20.0f, 20000.0f, band.freq);
         float q = juce::jlimit(0.1f, 10.0f, band.q);
         float gain = band.gainDb;
 
-        // Band 0: Low Cut
-        if (b == 0)
+        float delta = (freq / f0) - (f0 / freq);
+
+        switch (band.shape)
         {
-            float order = 2.0f;
-            switch (band.slope)
+            case FilterShape::Bell:
             {
-                case SlopeType::Slope6dB:  order = 1.0f; break;
-                case SlopeType::Slope12dB: order = 2.0f; break;
-                case SlopeType::Slope24dB: order = 4.0f; break;
-                case SlopeType::Slope48dB: order = 8.0f; break;
+                float denom = 1.0f + std::pow(q * delta, 2.0f);
+                totalDb += gain / denom;
+                break;
             }
-            float ratio = f0 / juce::jmax(1.0f, freq);
-            float cutDb = -10.0f * order * std::log10(1.0f + std::pow(ratio, 2.0f));
-            totalDb += juce::jlimit(-48.0f, 0.0f, cutDb);
-        }
-        // Band 5: High Cut
-        else if (b == 5)
-        {
-            float order = 2.0f;
-            switch (band.slope)
+            case FilterShape::LowCut:
             {
-                case SlopeType::Slope6dB:  order = 1.0f; break;
-                case SlopeType::Slope12dB: order = 2.0f; break;
-                case SlopeType::Slope24dB: order = 4.0f; break;
-                case SlopeType::Slope48dB: order = 8.0f; break;
+                float order = 2.0f;
+                switch (band.slope)
+                {
+                    case FilterSlope::Slope6dB:   order = 1.0f;  break;
+                    case FilterSlope::Slope12dB:  order = 2.0f;  break;
+                    case FilterSlope::Slope18dB:  order = 3.0f;  break;
+                    case FilterSlope::Slope24dB:  order = 4.0f;  break;
+                    case FilterSlope::Slope30dB:  order = 5.0f;  break;
+                    case FilterSlope::Slope36dB:  order = 6.0f;  break;
+                    case FilterSlope::Slope48dB:  order = 8.0f;  break;
+                    case FilterSlope::Slope72dB:  order = 12.0f; break;
+                    case FilterSlope::Slope96dB:  order = 16.0f; break;
+                    case FilterSlope::Brickwall:  order = 24.0f; break;
+                }
+                float ratio = f0 / juce::jmax(1.0f, freq);
+                float cutDb = -10.0f * order * std::log10(1.0f + std::pow(ratio, 2.0f));
+                totalDb += juce::jlimit(-60.0f, 0.0f, cutDb);
+                break;
             }
-            float ratio = freq / juce::jmax(1.0f, f0);
-            float cutDb = -10.0f * order * std::log10(1.0f + std::pow(ratio, 2.0f));
-            totalDb += juce::jlimit(-48.0f, 0.0f, cutDb);
-        }
-        // General Purpose Bands (1 to 4)
-        else
-        {
-            switch (band.type)
+            case FilterShape::HighCut:
             {
-                case BandType::Bell:
+                float order = 2.0f;
+                switch (band.slope)
                 {
-                    float ratio = freq / f0 - f0 / freq;
-                    float denom = 1.0f + std::pow(q * ratio, 2.0f);
-                    totalDb += gain / denom;
-                    break;
+                    case FilterSlope::Slope6dB:   order = 1.0f;  break;
+                    case FilterSlope::Slope12dB:  order = 2.0f;  break;
+                    case FilterSlope::Slope18dB:  order = 3.0f;  break;
+                    case FilterSlope::Slope24dB:  order = 4.0f;  break;
+                    case FilterSlope::Slope30dB:  order = 5.0f;  break;
+                    case FilterSlope::Slope36dB:  order = 6.0f;  break;
+                    case FilterSlope::Slope48dB:  order = 8.0f;  break;
+                    case FilterSlope::Slope72dB:  order = 12.0f; break;
+                    case FilterSlope::Slope96dB:  order = 16.0f; break;
+                    case FilterSlope::Brickwall:  order = 24.0f; break;
                 }
-                case BandType::LowShelf:
-                {
-                    float ratio = freq / f0;
-                    float denom = 1.0f + std::pow(ratio, 2.0f * q);
-                    totalDb += gain / denom;
-                    break;
-                }
-                case BandType::HighShelf:
-                {
-                    float ratio = f0 / freq;
-                    float denom = 1.0f + std::pow(ratio, 2.0f * q);
-                    totalDb += gain / denom;
-                    break;
-                }
-                case BandType::BandShelf:
-                {
-                    float logRatio = std::log(freq / f0) / (1.0f / juce::jmax(0.2f, q));
-                    float factor = std::exp(-std::pow(logRatio, 4.0f));
-                    totalDb += gain * factor;
-                    break;
-                }
-                case BandType::BandReject:
-                {
-                    float ratio = freq / f0 - f0 / freq;
-                    float denom = 1.0f + std::pow(q * ratio, 2.0f);
-                    totalDb += -36.0f / denom;
-                    break;
-                }
-                case BandType::Tilt:
-                {
-                    float tiltNorm = std::log10(freq / f0) / std::log10(20000.0f / 20.0f);
-                    totalDb += gain * tiltNorm * 2.0f;
-                    break;
-                }
+                float ratio = freq / juce::jmax(1.0f, f0);
+                float cutDb = -10.0f * order * std::log10(1.0f + std::pow(ratio, 2.0f));
+                totalDb += juce::jlimit(-60.0f, 0.0f, cutDb);
+                break;
+            }
+            case FilterShape::LowShelf:
+            {
+                float ratio = freq / f0;
+                float denom = 1.0f + std::pow(ratio, 2.0f * q);
+                totalDb += gain / denom;
+                break;
+            }
+            case FilterShape::HighShelf:
+            {
+                float ratio = f0 / freq;
+                float denom = 1.0f + std::pow(ratio, 2.0f * q);
+                totalDb += gain / denom;
+                break;
+            }
+            case FilterShape::Notch:
+            {
+                float denom = 1.0f + std::pow(q * delta, 2.0f);
+                totalDb += -48.0f / denom;
+                break;
+            }
+            case FilterShape::BandPass:
+            {
+                float denom = 1.0f + std::pow(q * delta, 2.0f);
+                totalDb += -48.0f * (1.0f - 1.0f / denom);
+                break;
+            }
+            case FilterShape::TiltShelf:
+            {
+                float logRatio = std::log10(freq / f0);
+                totalDb += gain * std::tanh(1.5f * logRatio);
+                break;
+            }
+            case FilterShape::FlatTilt:
+            {
+                float tiltNorm = std::log10(freq / 1000.0f) / std::log10(20000.0f / 20.0f);
+                totalDb += gain * tiltNorm * 2.0f;
+                break;
             }
         }
     }
@@ -214,7 +239,18 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (numSamples == 0)
         return;
 
-    // If bypassed, pass audio through and reset telemetry
+    // Check if any band is in Solo / Audition mode
+    int soloBandIndex = -1;
+    for (int b = 0; b < NumParametricBands; ++b)
+    {
+        if (currentBands[b].solo && !currentBands[b].bypassed)
+        {
+            soloBandIndex = b;
+            break;
+        }
+    }
+
+    // If bypassed, pass audio through
     if (isBypassed)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -248,18 +284,21 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         sidechainCopyBuffer.clear();
     }
 
-    // Sidechain Listen mode
-    if (listenSidechain)
+    // Sidechain Master Listen or Per-Band Solo Audition Mode
+    if (listenSidechain || soloBandIndex >= 0)
     {
+        const float* srcL = sidechainCopyBuffer.getReadPointer(0);
+        const float* srcR = sidechainCopyBuffer.getReadPointer(1);
+
         for (int ch = 0; ch < numMainChannels; ++ch)
         {
-            int srcCh = juce::jmin(ch, 1);
-            mainBuffer.copyFrom(ch, 0, sidechainCopyBuffer, srcCh, 0, numSamples);
+            const float* src = (ch == 0) ? srcL : srcR;
+            mainBuffer.copyFrom(ch, 0, src, numSamples);
         }
 
         for (int i = 0; i < numSamples; ++i)
         {
-            float scMono = 0.5f * (sidechainCopyBuffer.getSample(0, i) + sidechainCopyBuffer.getSample(1, i));
+            float scMono = 0.5f * (srcL[i] + srcR[i]);
             visualizerFifo.pushSample(scMono, scMono, scMono, 1.0f);
         }
         for (int b = 0; b < NumBands; ++b)
@@ -286,49 +325,66 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         auto& band = bands[b];
         float centerF = band.centerFreq;
 
-        // Evaluate sensitivity weight for this frequency
-        float sensitivityDb = evaluateSensitivityDb(centerF);
-        float sensitivityWeight = juce::Decibels::decibelsToGain(sensitivityDb);
-        sensitivityWeight = juce::jlimit(0.0f, 6.0f, sensitivityWeight);
+        // Evaluate sensitivity weight for Left and Right channels
+        float sensDbL = evaluateSensitivityDb(centerF, 0);
+        float sensDbR = evaluateSensitivityDb(centerF, 1);
+
+        float sensWeightL = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbL));
+        float sensWeightR = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbR));
 
         // Extract band energy from sidechain
         float bandMaxEnergy = 0.0f;
         for (int i = 0; i < numSamples; ++i)
         {
-            float filteredScL = band.scFilterL.processSample(scL[i]);
-            float filteredScR = band.scFilterR.processSample(scR[i]);
-            float scMag = juce::jmax(std::abs(filteredScL), std::abs(filteredScR));
+            float fScL = band.scFilterL.processSample(scL[i]);
+            float fScR = band.scFilterR.processSample(scR[i]);
 
-            if (scMag > band.envelopeState)
-                band.envelopeState = attackCoeff * band.envelopeState + (1.0f - attackCoeff) * scMag;
+            float scMagL = std::abs(fScL);
+            float scMagR = std::abs(fScR);
+            float scMagMax = juce::jmax(scMagL, scMagR);
+
+            if (scMagL > band.envelopeStateL)
+                band.envelopeStateL = attackCoeff * band.envelopeStateL + (1.0f - attackCoeff) * scMagL;
             else
-                band.envelopeState = releaseCoeff * band.envelopeState + (1.0f - releaseCoeff) * scMag;
+                band.envelopeStateL = releaseCoeff * band.envelopeStateL + (1.0f - releaseCoeff) * scMagL;
 
-            if (band.envelopeState > bandMaxEnergy)
-                bandMaxEnergy = band.envelopeState;
+            if (scMagR > band.envelopeStateR)
+                band.envelopeStateR = attackCoeff * band.envelopeStateR + (1.0f - attackCoeff) * scMagR;
+            else
+                band.envelopeStateR = releaseCoeff * band.envelopeStateR + (1.0f - releaseCoeff) * scMagR;
+
+            if (scMagMax > bandMaxEnergy)
+                bandMaxEnergy = scMagMax;
         }
 
         if (bandMaxEnergy > maxSidechainInBlock)
             maxSidechainInBlock = bandMaxEnergy;
 
-        // Calculate dynamic ducking cut:
-        // Boosting sensitivity makes the ducker more sensitive (more ducking); cutting sensitivity protects the band.
-        float bandEnvNorm = juce::jlimit(0.0f, 2.0f, band.envelopeState * 2.8f);
-        float targetCutDb = -48.0f * curAmount * bandEnvNorm * sensitivityWeight;
-        targetCutDb = juce::jlimit(-48.0f, 0.0f, targetCutDb);
+        // Calculate dynamic ducking cut per channel
+        float envNormL = juce::jlimit(0.0f, 2.0f, band.envelopeStateL * 2.8f);
+        float envNormR = juce::jlimit(0.0f, 2.0f, band.envelopeStateR * 2.8f);
 
-        // Smooth transition
-        band.currentGainDb = band.currentGainDb * 0.4f + targetCutDb * 0.6f;
-        bandReductionTelemetry[b].store(band.currentGainDb);
+        float targetCutDbL = juce::jlimit(-48.0f, 0.0f, -48.0f * curAmount * envNormL * sensWeightL);
+        float targetCutDbR = juce::jlimit(-48.0f, 0.0f, -48.0f * curAmount * envNormR * sensWeightR);
 
-        if (std::abs(band.currentGainDb) > maxGainReductionInBlock)
-            maxGainReductionInBlock = std::abs(band.currentGainDb);
+        band.currentGainDbL = band.currentGainDbL * 0.4f + targetCutDbL * 0.6f;
+        band.currentGainDbR = band.currentGainDbR * 0.4f + targetCutDbR * 0.6f;
+
+        float avgCutDb = 0.5f * (band.currentGainDbL + band.currentGainDbR);
+        bandReductionTelemetry[b].store(avgCutDb);
+
+        if (std::abs(avgCutDb) > maxGainReductionInBlock)
+            maxGainReductionInBlock = std::abs(avgCutDb);
 
         // Update dynamic peaking EQ on main audio
-        float gainLinear = juce::Decibels::decibelsToGain(band.currentGainDb);
-        auto eqCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, centerF, band.q, gainLinear);
-        band.mainEqL.coefficients = eqCoeffs;
-        band.mainEqR.coefficients = eqCoeffs;
+        float gainLinearL = juce::Decibels::decibelsToGain(band.currentGainDbL);
+        float gainLinearR = juce::Decibels::decibelsToGain(band.currentGainDbR);
+
+        auto eqCoeffsL = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, centerF, band.q, gainLinearL);
+        auto eqCoeffsR = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, centerF, band.q, gainLinearR);
+
+        band.mainEqL.coefficients = eqCoeffsL;
+        band.mainEqR.coefficients = eqCoeffsR;
 
         float* ch0 = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
         float* ch1 = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
