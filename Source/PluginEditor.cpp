@@ -481,6 +481,10 @@ void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(CustomLookAndFeel::m3OutlineVariant);
     g.drawRoundedRectangle(bandArea, 14.0f, 1.0f);
 
+    // Divider separating Band Parameters from Global Presets & Resolution
+    g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.35f));
+    g.drawVerticalLine(605, 298.0f, 388.0f);
+
     // 2. Bottom Master Card (190px height)
     auto bottomArea = juce::Rectangle<int>(16, 404, getWidth() - 32, 190).toFloat();
     g.setColour(CustomLookAndFeel::m3SurfaceContainer);
@@ -547,33 +551,35 @@ void SideDuckerAudioProcessorEditor::resized()
     // Row 1 of Band Card (Pills & Title & Toggles: y = 298, height = 22)
     int pillStartX = 28;
     int pillY = bandCardY + 8;
-    int pillW = 28;
+    int pillW = 22;
     int pillH = 22;
     for (int i = 0; i < 6; ++i)
     {
-        bandSelectButtons[i].setBounds(pillStartX + i * (pillW + 4), pillY, pillW, pillH);
+        bandSelectButtons[i].setBounds(pillStartX + i * (pillW + 3), pillY, pillW, pillH);
     }
 
-    bandTitleLabel.setBounds(pillStartX + 6 * (pillW + 4) + 8, pillY, 180, 22);
+    int titleStartX = pillStartX + 6 * (pillW + 3) + 8;
+    bandTitleLabel.setBounds(titleStartX, pillY, 130, 22);
 
-    eqPresetComboBox.setBounds(224, pillY, 155, 22);
+    bandSoloButton.setBounds(430, pillY, 72, 22);
+    bandBypassButton.setBounds(510, pillY, 76, 22);
 
-    bandSoloButton.setBounds(getWidth() - 240, pillY, 68, 22);
-    bandBypassButton.setBounds(getWidth() - 166, pillY, 72, 22);
-    resetEqButton.setBounds(getWidth() - 88, pillY, 64, 22);
+    // Global EQ Tools (Right Zone: x > 605)
+    eqPresetComboBox.setBounds(620, pillY, 140, 22);
+    resetEqButton.setBounds(766, pillY, 72, 22);
 
     // Row 2 of Band Card (Controls: y = 330, height = 58)
     int ctrlY = bandCardY + 36;
     int startComboX = 28;
 
-    bandShapeComboBox.setBounds(startComboX, ctrlY + 16, 98, 26);
-    bandSlopeComboBox.setBounds(startComboX + 104, ctrlY + 16, 84, 26);
-    bandStereoComboBox.setBounds(startComboX + (bandSlopeComboBox.isVisible() ? 194 : 104), ctrlY + 16, 76, 26);
+    bandShapeComboBox.setBounds(startComboX, ctrlY + 16, 96, 26);
+    bandSlopeComboBox.setBounds(startComboX + 102, ctrlY + 16, 84, 26);
+    bandStereoComboBox.setBounds(startComboX + (bandSlopeComboBox.isVisible() ? 192 : 102), ctrlY + 16, 76, 26);
 
-    // Compact Rotary Dials (Freq, Gain, Q, and Bands Resolution Knob)
+    // Compact Rotary Dials for Band Parameters (Freq, Gain, Q)
     int sliderW = 56;
     int sliderH = 50;
-    int startDialX = bandSlopeComboBox.isVisible() ? 415 : 325;
+    int startDialX = bandSlopeComboBox.isVisible() ? 300 : 212;
     int dialSpacing = 72;
 
     bandFreqLabel.setBounds(startDialX, ctrlY + 2, sliderW, 12);
@@ -583,11 +589,12 @@ void SideDuckerAudioProcessorEditor::resized()
     bandGainLabel.setBounds(gainX, ctrlY + 2, sliderW, 12);
     bandGainSlider.setBounds(gainX, ctrlY + 14, sliderW, sliderH);
 
-    int qX = gainX + (bandGainSlider.isVisible() ? dialSpacing : 0);
+    int qX = startDialX + (bandGainSlider.isVisible() ? dialSpacing * 2 : dialSpacing);
     bandQLabel.setBounds(qX, ctrlY + 2, sliderW, 12);
     bandQSlider.setBounds(qX, ctrlY + 14, sliderW, sliderH);
 
-    int bandsDialX = qX + dialSpacing;
+    // Global Resolution Dial (Right Zone)
+    int bandsDialX = 705;
     spectralBandsLabel.setBounds(bandsDialX, ctrlY + 2, sliderW, 12);
     spectralBandsSlider.setBounds(bandsDialX, ctrlY + 14, sliderW, sliderH);
 
