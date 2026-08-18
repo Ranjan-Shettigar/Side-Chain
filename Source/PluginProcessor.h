@@ -54,6 +54,11 @@ private:
     std::atomic<float>* scListenParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
 
+    // Master Stereo Section parameter pointers
+    std::atomic<float>* stereoModeParam = nullptr;
+    std::atomic<float>* stereoLinkParam = nullptr;
+    std::atomic<float>* stereoBalanceParam = nullptr;
+
     // 6 Parametric Band parameter pointers
     struct BandParamPointers
     {

@@ -1,30 +1,35 @@
 #include "CustomLookAndFeel.h"
 
-// Official Google Material Design 3 Dark Theme Palette
-const juce::Colour CustomLookAndFeel::m3Surface                  = juce::Colour::fromRGB(17, 19, 24);   // #111318
+// Material Design 3 Tonal Dark Palette
+const juce::Colour CustomLookAndFeel::m3Surface                 = juce::Colour::fromRGB(17, 19, 24);   // #111318
 const juce::Colour CustomLookAndFeel::m3SurfaceContainerLowest   = juce::Colour::fromRGB(12, 14, 19);   // #0C0E13
-const juce::Colour CustomLookAndFeel::m3SurfaceContainerLow      = juce::Colour::fromRGB(25, 28, 32);   // #191C20
+const juce::Colour CustomLookAndFeel::m3SurfaceContainerLow      = juce::Colour::fromRGB(25, 28, 33);   // #191C21
 const juce::Colour CustomLookAndFeel::m3SurfaceContainer         = juce::Colour::fromRGB(29, 32, 36);   // #1D2024
 const juce::Colour CustomLookAndFeel::m3SurfaceContainerHigh     = juce::Colour::fromRGB(40, 42, 47);   // #282A2F
 const juce::Colour CustomLookAndFeel::m3SurfaceContainerHighest  = juce::Colour::fromRGB(51, 53, 58);   // #33353A
-const juce::Colour CustomLookAndFeel::m3Primary                 = juce::Colour::fromRGB(168, 199, 250); // #A8C7FA (M3 Soft Blue)
-const juce::Colour CustomLookAndFeel::m3PrimaryContainer        = juce::Colour::fromRGB(8, 66, 160);   // #0842A0
-const juce::Colour CustomLookAndFeel::m3Secondary               = juce::Colour::fromRGB(124, 219, 138); // #7CDB8A (M3 Mint)
-const juce::Colour CustomLookAndFeel::m3Tertiary                = juce::Colour::fromRGB(244, 143, 177); // #F48FB1 (M3 Coral/Rose)
-const juce::Colour CustomLookAndFeel::m3Outline                 = juce::Colour::fromRGB(68, 71, 78);   // #44474E
-const juce::Colour CustomLookAndFeel::m3OutlineVariant          = juce::Colour::fromRGB(44, 46, 51);   // #2C2E33
-const juce::Colour CustomLookAndFeel::m3OnSurface               = juce::Colour::fromRGB(226, 226, 230); // #E2E2E6
-const juce::Colour CustomLookAndFeel::m3OnSurfaceVariant        = juce::Colour::fromRGB(196, 199, 208); // #C4C7D0
+
+const juce::Colour CustomLookAndFeel::m3Primary                  = juce::Colour::fromRGB(168, 199, 250); // #A8C7FA Soft Blue
+const juce::Colour CustomLookAndFeel::m3PrimaryContainer         = juce::Colour::fromRGB(8, 66, 160);   // #0842A0
+const juce::Colour CustomLookAndFeel::m3Secondary                = juce::Colour::fromRGB(124, 219, 138); // #7CDB8A Mint Green
+const juce::Colour CustomLookAndFeel::m3Tertiary                 = juce::Colour::fromRGB(244, 143, 177); // #F48FB1 Coral Pink
+
+const juce::Colour CustomLookAndFeel::m3Outline                  = juce::Colour::fromRGB(68, 71, 78);   // #44474E
+const juce::Colour CustomLookAndFeel::m3OutlineVariant           = juce::Colour::fromRGB(44, 46, 51);   // #2C2E33
+const juce::Colour CustomLookAndFeel::m3OnSurface                = juce::Colour::fromRGB(226, 226, 233); // #E2E2E9
+const juce::Colour CustomLookAndFeel::m3OnSurfaceVariant         = juce::Colour::fromRGB(196, 198, 207); // #C4C6CF
 
 CustomLookAndFeel::CustomLookAndFeel()
 {
-    setColour(juce::ResizableWindow::backgroundColourId, m3Surface);
-    setColour(juce::Slider::textBoxTextColourId, m3OnSurface);
     setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour(juce::Label::textColourId, m3OnSurfaceVariant);
+    setColour(juce::Slider::textBoxBackgroundColourId, m3SurfaceContainerHigh);
+    setColour(juce::Slider::textBoxTextColourId, m3OnSurface);
+    setColour(juce::Slider::textBoxHighlightColourId, m3PrimaryContainer);
+
     setColour(juce::ComboBox::backgroundColourId, m3SurfaceContainerHigh);
     setColour(juce::ComboBox::textColourId, m3OnSurface);
     setColour(juce::ComboBox::outlineColourId, m3OutlineVariant);
+    setColour(juce::ComboBox::arrowColourId, m3OnSurfaceVariant);
+
     setColour(juce::PopupMenu::backgroundColourId, m3SurfaceContainerHigh);
     setColour(juce::PopupMenu::textColourId, m3OnSurface);
     setColour(juce::PopupMenu::highlightedBackgroundColourId, m3SurfaceContainerHighest);
@@ -46,80 +51,137 @@ void CustomLookAndFeel::drawRotarySlider(juce::Graphics& g,
     float trackThickness = 4.0f;
     float arcRadius = radius - trackThickness * 0.5f;
 
-    // 1. M3 Track Background Arc
+    // 1. Track Background Arc
     juce::Path bgArc;
     bgArc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour(m3SurfaceContainerHighest);
+    g.setColour(slider.isEnabled() ? m3SurfaceContainerHighest : m3SurfaceContainerHighest.withAlpha(0.4f));
     g.strokePath(bgArc, juce::PathStrokeType(trackThickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // 2. M3 Active Track Arc
-    if (sliderPosProportional > 0.001f)
+    // 2. Active Track Arc
+    if (slider.isEnabled())
     {
-        juce::Path activeArc;
-        activeArc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, rotaryStartAngle, currentAngle, true);
+        bool isBalance = slider.getName().containsIgnoreCase("balance");
+        float centerAngle = 0.5f * (rotaryStartAngle + rotaryEndAngle);
 
-        juce::Colour trackCol = m3Primary;
-        if (slider.getName().containsIgnoreCase("gain") || slider.getName().containsIgnoreCase("sens"))
-            trackCol = m3Secondary;
-        else if (slider.getName().containsIgnoreCase("release") || slider.getName().containsIgnoreCase("attack"))
-            trackCol = m3Primary;
+        if (isBalance)
+        {
+            float arcStart = centerAngle;
+            float arcEnd = currentAngle;
+            if (arcStart > arcEnd) std::swap(arcStart, arcEnd);
 
-        g.setColour(trackCol);
-        g.strokePath(activeArc, juce::PathStrokeType(trackThickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            if (std::abs(sliderPosProportional - 0.5f) > 0.008f)
+            {
+                juce::Path balArc;
+                balArc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, arcStart, arcEnd, true);
+                g.setColour(m3OnSurface);
+                g.strokePath(balArc, juce::PathStrokeType(trackThickness + 1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+
+            // Center Notch Pip at 12 o'clock
+            float topX = centre.x + std::sin(centerAngle) * arcRadius;
+            float topY = centre.y - std::cos(centerAngle) * arcRadius;
+            g.setColour(m3Outline.withAlpha(0.7f));
+            g.fillEllipse(topX - 1.5f, topY - 1.5f, 3.0f, 3.0f);
+        }
+        else if (sliderPosProportional > 0.001f)
+        {
+            juce::Path activeArc;
+            activeArc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f, rotaryStartAngle, currentAngle, true);
+
+            juce::Colour trackCol = m3Primary;
+            if (slider.getName().containsIgnoreCase("gain") || slider.getName().containsIgnoreCase("sens"))
+                trackCol = m3Secondary;
+
+            g.setColour(trackCol);
+            g.strokePath(activeArc, juce::PathStrokeType(trackThickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
     }
 
-    // 3. Dial Face (Flat M3 Surface Container High with subtle outline)
+    // 3. Dial Face
     float knobRadius = radius - trackThickness - 3.5f;
     auto knobBounds = juce::Rectangle<float>(centre.x - knobRadius, centre.y - knobRadius, knobRadius * 2.0f, knobRadius * 2.0f);
 
-    g.setColour(m3SurfaceContainerHigh);
+    g.setColour(slider.isEnabled() ? m3SurfaceContainerHigh : m3SurfaceContainerHigh.withAlpha(0.4f));
     g.fillEllipse(knobBounds);
 
     g.setColour(m3OutlineVariant);
     g.drawEllipse(knobBounds, 1.0f);
 
-    // 4. M3 Pill Indicator Notch
-    juce::Path indicator;
-    float indLength = knobRadius * 0.55f;
-    float indWidth = 3.0f;
-    indicator.addRoundedRectangle(-indWidth * 0.5f, -knobRadius + 2.5f, indWidth, indLength, indWidth * 0.5f);
-    indicator.applyTransform(juce::AffineTransform::rotation(currentAngle).translated(centre.x, centre.y));
+    // Indicator Notch
+    if (slider.isEnabled())
+    {
+        float pointerX = centre.x + std::sin(currentAngle) * (knobRadius - 2.0f);
+        float pointerY = centre.y - std::cos(currentAngle) * (knobRadius - 2.0f);
+        float pointerInnerX = centre.x + std::sin(currentAngle) * (knobRadius - 6.5f);
+        float pointerInnerY = centre.y - std::cos(currentAngle) * (knobRadius - 6.5f);
 
-    g.setColour(m3OnSurface);
-    g.fillPath(indicator);
+        g.setColour(m3OnSurface);
+        g.drawLine(pointerInnerX, pointerInnerY, pointerX, pointerY, 2.5f);
+    }
+}
+
+void CustomLookAndFeel::drawLinearSlider(juce::Graphics& g,
+                                         int x, int y, int width, int height,
+                                         float sliderPos,
+                                         float minSliderPos,
+                                         float maxSliderPos,
+                                         const juce::Slider::SliderStyle /*style*/,
+                                         juce::Slider& slider)
+{
+    auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(2.0f);
+    float cornerRadius = 6.0f;
+
+    // Track Background
+    g.setColour(slider.isEnabled() ? m3SurfaceContainerHigh : m3SurfaceContainerHigh.withAlpha(0.4f));
+    g.fillRoundedRectangle(bounds, cornerRadius);
+
+    // Active Bar
+    float minX = minSliderPos;
+    float maxX = maxSliderPos;
+    float currentX = sliderPos;
+
+    float norm = (maxX > minX) ? juce::jlimit(0.0f, 1.0f, (currentX - minX) / (maxX - minX)) : 0.5f;
+    auto activeBounds = juce::Rectangle<float>(bounds.getX(), bounds.getY(), bounds.getWidth() * norm, bounds.getHeight());
+
+    if (slider.isEnabled() && norm > 0.01f)
+    {
+        g.setColour(m3PrimaryContainer.withAlpha(0.6f));
+        g.fillRoundedRectangle(activeBounds, cornerRadius);
+    }
+
+    g.setColour(m3OutlineVariant);
+    g.drawRoundedRectangle(bounds, cornerRadius, 1.0f);
 }
 
 void CustomLookAndFeel::drawToggleButton(juce::Graphics& g,
-                                        juce::ToggleButton& button,
-                                        bool shouldDrawButtonAsHighlighted,
-                                        bool /*shouldDrawButtonAsDown*/)
+                                         juce::ToggleButton& button,
+                                         bool shouldDrawButtonAsHighlighted,
+                                         bool /*shouldDrawButtonAsDown*/)
 {
-    auto bounds = button.getLocalBounds().toFloat().reduced(2.0f);
+    auto bounds = button.getLocalBounds().toFloat().reduced(1.5f);
     bool isOn = button.getToggleState();
 
-    // M3 Pill Container (Capsule shape)
     float cornerRadius = bounds.getHeight() * 0.5f;
 
     juce::Colour bgCol = isOn ? m3PrimaryContainer : m3SurfaceContainerHigh;
-    if (shouldDrawButtonAsHighlighted)
+    if (shouldDrawButtonAsHighlighted && button.isEnabled())
         bgCol = bgCol.brighter(0.08f);
 
-    g.setColour(bgCol);
+    g.setColour(button.isEnabled() ? bgCol : bgCol.withAlpha(0.35f));
     g.fillRoundedRectangle(bounds, cornerRadius);
 
     g.setColour(isOn ? m3Primary : m3OutlineVariant);
     g.drawRoundedRectangle(bounds, cornerRadius, 1.0f);
 
-    // Pill Text & Status Indicator
     auto textBounds = bounds.reduced(8.0f, 2.0f);
     float dotRadius = 3.0f;
     float dotX = textBounds.getX() + 6.0f;
     float dotY = textBounds.getCentreY();
 
-    g.setColour(isOn ? m3Primary : m3OnSurfaceVariant);
+    g.setColour(isOn ? m3Primary : m3OnSurfaceVariant.withAlpha(button.isEnabled() ? 1.0f : 0.4f));
     g.fillEllipse(dotX - dotRadius, dotY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
 
-    g.setColour(isOn ? m3OnSurface : m3OnSurfaceVariant);
+    g.setColour(isOn ? m3OnSurface : m3OnSurfaceVariant.withAlpha(button.isEnabled() ? 1.0f : 0.4f));
     g.setFont(juce::Font(11.0f, juce::Font::bold));
     g.drawFittedText(button.getButtonText(),
                      static_cast<int>(dotX + dotRadius + 6.0f),
@@ -136,36 +198,46 @@ void CustomLookAndFeel::drawButtonBackground(juce::Graphics& g,
                                              bool shouldDrawButtonAsDown)
 {
     auto bounds = button.getLocalBounds().toFloat().reduced(1.5f);
-    float cornerRadius = bounds.getHeight() * 0.5f; // Pill Chip shape
+    float cornerRadius = bounds.getHeight() * 0.5f;
 
     bool isSelected = button.getToggleState();
     juce::Colour bg = isSelected ? m3SurfaceContainerHighest : m3SurfaceContainerHigh;
 
-    if (shouldDrawButtonAsDown)
+    if (shouldDrawButtonAsDown && button.isEnabled())
         bg = bg.darker(0.1f);
-    else if (shouldDrawButtonAsHighlighted)
+    else if (shouldDrawButtonAsHighlighted && button.isEnabled())
         bg = bg.brighter(0.08f);
 
-    g.setColour(bg);
+    g.setColour(button.isEnabled() ? bg : bg.withAlpha(0.35f));
     g.fillRoundedRectangle(bounds, cornerRadius);
 
     g.setColour(isSelected ? m3Primary : m3OutlineVariant);
     g.drawRoundedRectangle(bounds, cornerRadius, isSelected ? 1.5f : 1.0f);
+}
 
-    // Button Text
-    g.setColour(isSelected ? m3OnSurface : m3OnSurfaceVariant);
+void CustomLookAndFeel::drawButtonText(juce::Graphics& g,
+                                       juce::TextButton& button,
+                                       bool /*shouldDrawButtonAsHighlighted*/,
+                                       bool /*shouldDrawButtonAsDown*/)
+{
+    bool isSelected = button.getToggleState();
+    juce::Colour textCol = isSelected ? m3OnSurface : m3OnSurfaceVariant;
+    if (!button.isEnabled())
+        textCol = textCol.withAlpha(0.35f);
+
+    g.setColour(textCol);
     g.setFont(juce::Font(11.0f, juce::Font::bold));
     g.drawText(button.getButtonText(), button.getLocalBounds(), juce::Justification::centred);
 }
 
 void CustomLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool /*isButtonDown*/,
                                      int /*buttonX*/, int /*buttonY*/, int /*buttonW*/, int /*buttonH*/,
-                                     juce::ComboBox& /*box*/)
+                                     juce::ComboBox& box)
 {
     auto bounds = juce::Rectangle<int>(0, 0, width, height).toFloat().reduced(1.0f);
     float cornerRadius = 8.0f;
 
-    g.setColour(m3SurfaceContainerHigh);
+    g.setColour(box.isEnabled() ? m3SurfaceContainerHigh : m3SurfaceContainerHigh.withAlpha(0.35f));
     g.fillRoundedRectangle(bounds, cornerRadius);
 
     g.setColour(m3OutlineVariant);
@@ -179,7 +251,7 @@ void CustomLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, b
     arrow.lineTo(arrowX, arrowY + 2.0f);
     arrow.lineTo(arrowX + 4.0f, arrowY - 2.0f);
 
-    g.setColour(m3OnSurfaceVariant);
+    g.setColour(box.isEnabled() ? m3OnSurfaceVariant : m3OnSurfaceVariant.withAlpha(0.35f));
     g.strokePath(arrow, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
@@ -225,7 +297,7 @@ void CustomLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
 
     if (!label.isBeingEdited())
     {
-        auto alpha = label.isEnabled() ? 1.0f : 0.5f;
+        auto alpha = label.isEnabled() ? 1.0f : 0.4f;
         const juce::Font font(getLabelFont(label));
 
         g.setColour(label.findColour(juce::Label::textColourId).withMultipliedAlpha(alpha));

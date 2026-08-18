@@ -8,12 +8,9 @@
  * 
  * Features:
  * - 48 independent logarithmic frequency bands (20 Hz - 20 kHz)
- * - 6 fully flexible parametric bands with 9 filter shapes:
- *   Bell, Low Cut, High Cut, Low Shelf, High Shelf, Notch, Band Pass, Tilt Shelf, Flat Tilt
- * - 10 Slopes: 6, 12, 18, 24, 30, 36, 48, 72, 96 dB/oct, Brickwall
- * - Stereo Placement per band: Stereo, Left, Right, Mid, Side
- * - Per-band Solo / Audition mode
- * - Analog-matched Nyquist pre-warping magnitude response equations
+ * - 6 fully flexible parametric bands with 9 filter shapes
+ * - 10 Slopes, Stereo Placement per band, Per-band Solo
+ * - Master Stereo Section: Mode (L/R vs M/S), Link (0-100%), Balance
  * - Real-time per-band reduction telemetry for the downward reduction graph
  */
 class DuckingProcessor
@@ -58,16 +55,29 @@ public:
         SideOnly
     };
 
+    enum class StereoMode
+    {
+        LeftRight = 0,
+        MidSide
+    };
+
     struct ParametricBandConfig
     {
         FilterShape shape = FilterShape::Bell;
         FilterSlope slope = FilterSlope::Slope12dB;
         StereoPlacement stereoPlacement = StereoPlacement::Stereo;
         float freq = 1000.0f;
-        float gainDb = 0.0f; // -18 to +18 dB
-        float q = 1.4f;      // 0.1 to 10.0
+        float gainDb = 0.0f;
+        float q = 1.4f;
         bool bypassed = false;
         bool solo = false;
+    };
+
+    struct StereoConfig
+    {
+        StereoMode mode = StereoMode::LeftRight;
+        float linkPercent = 100.0f;   // 0 to 100
+        float balancePercent = 50.0f; // 0 (full left/mid) to 100 (full right/side), 50 = even
     };
 
     DuckingProcessor();
@@ -82,7 +92,8 @@ public:
                        float outputGainDb,
                        bool sidechainListen,
                        bool bypass,
-                       const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs);
+                       const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
+                       const StereoConfig& stereoConfig);
 
     void process(juce::AudioBuffer<float>& mainBuffer,
                  const juce::AudioBuffer<float>& sidechainBuffer,
@@ -107,10 +118,13 @@ public:
 
     float evaluateSensitivityDb(float freq, int channel = 0) const;
     const std::array<ParametricBandConfig, NumParametricBands>& getBandConfigs() const noexcept { return currentBands; }
+    const StereoConfig& getStereoConfig() const noexcept { return currentStereo; }
+    bool isStereoInstance() const noexcept { return numChannels >= 2; }
 
 private:
     double sampleRate = 44100.0;
     int samplesPerBlock = 512;
+    int numChannels = 2;
 
     // Master Parameters
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedAmount;
@@ -121,6 +135,7 @@ private:
     bool isBypassed = false;
 
     std::array<ParametricBandConfig, NumParametricBands> currentBands;
+    StereoConfig currentStereo;
 
     // Smoothing coefficients
     float attackCoeff = 0.0f;
@@ -129,21 +144,22 @@ private:
     void updateCoefficients();
     void initializeBands();
 
+    // Encode/decode stereo to mid-side and back
+    void encodeToMidSide(juce::AudioBuffer<float>& buffer);
+    void decodeFromMidSide(juce::AudioBuffer<float>& buffer);
+
     // 48-Band Dynamic Spectral EQ structures
     struct DynamicBand
     {
         float centerFreq = 1000.0f;
         float q = 2.4f;
 
-        // Sidechain band detection filters (Bandpass)
         juce::dsp::IIR::Filter<float> scFilterL;
         juce::dsp::IIR::Filter<float> scFilterR;
 
-        // Main signal dynamic peaking EQ filters
         juce::dsp::IIR::Filter<float> mainEqL;
         juce::dsp::IIR::Filter<float> mainEqR;
 
-        // Envelope state
         float envelopeStateL = 0.0f;
         float envelopeStateR = 0.0f;
         float currentGainDbL = 0.0f;
@@ -155,7 +171,7 @@ private:
     juce::AudioBuffer<float> sidechainCopyBuffer;
     juce::AudioBuffer<float> soloBuffer;
 
-    // Telemetry atomic values for UI
+    // Telemetry
     std::atomic<float> currentGainReduction { 1.0f };
     std::atomic<float> currentSidechainLevel { 0.0f };
     std::array<std::atomic<float>, NumBands> bandReductionTelemetry;

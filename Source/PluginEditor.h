@@ -36,6 +36,18 @@ private:
     juce::Label releaseLabel;
     juce::Label outputGainLabel;
 
+    // Master Stereo Section Controls
+    juce::Label stereoTitleLabel;
+    juce::Label stereoModeLabel;
+    juce::TextButton stereoModeButton;
+
+    juce::Label stereoLinkLabel;
+    juce::Slider stereoLinkSlider;
+
+    juce::Label stereoBalanceLabel;
+    juce::Slider stereoBalanceSlider;
+    juce::Label stereoBalanceValueLabel;
+
     // Band Selector Pill Buttons (1 to 6)
     std::array<juce::TextButton, 6> bandSelectButtons;
 
@@ -71,6 +83,10 @@ private:
     std::unique_ptr<ButtonAttachment> scListenAttachment;
     std::unique_ptr<ButtonAttachment> bypassAttachment;
 
+    // Master Stereo Attachments
+    std::unique_ptr<SliderAttachment> stereoLinkAttachment;
+    std::unique_ptr<SliderAttachment> stereoBalanceAttachment;
+
     // Dynamic attachments for selected band
     std::unique_ptr<ComboBoxAttachment> selectedShapeAttachment;
     std::unique_ptr<ComboBoxAttachment> selectedSlopeAttachment;
@@ -83,6 +99,7 @@ private:
 
     void setupRotaryControl(juce::Slider& slider, juce::Label& label, const juce::String& text, const juce::String& suffix);
     void updateSelectedBandUI(int bandIndex);
+    void updateStereoSectionUI();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SideDuckerAudioProcessorEditor)
 };

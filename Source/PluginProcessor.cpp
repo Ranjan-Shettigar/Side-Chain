@@ -8,12 +8,16 @@ SideDuckerAudioProcessor::SideDuckerAudioProcessor()
                      .withInput("Sidechain", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "Parameters", createParameterLayout())
 {
-    amountParam     = apvts.getRawParameterValue("amount");
-    attackParam     = apvts.getRawParameterValue("attack");
-    releaseParam    = apvts.getRawParameterValue("release");
-    outputGainParam = apvts.getRawParameterValue("outputGain");
-    scListenParam   = apvts.getRawParameterValue("scListen");
-    bypassParam     = apvts.getRawParameterValue("bypass");
+    amountParam        = apvts.getRawParameterValue("amount");
+    attackParam        = apvts.getRawParameterValue("attack");
+    releaseParam       = apvts.getRawParameterValue("release");
+    outputGainParam    = apvts.getRawParameterValue("outputGain");
+    scListenParam      = apvts.getRawParameterValue("scListen");
+    bypassParam        = apvts.getRawParameterValue("bypass");
+
+    stereoModeParam    = apvts.getRawParameterValue("stereo_mode");
+    stereoLinkParam    = apvts.getRawParameterValue("stereo_link");
+    stereoBalanceParam = apvts.getRawParameterValue("stereo_balance");
 
     for (int i = 0; i < 6; ++i)
     {
@@ -74,12 +78,43 @@ juce::AudioProcessorValueTreeState::ParameterLayout SideDuckerAudioProcessor::cr
     params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID("scListen", 1), "SC Listen", false));
     params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID("bypass", 1), "Bypass", false));
 
+    // Master Stereo Controls
+    const juce::StringArray stereoModeChoices = { "left | right", "mid | side" };
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID("stereo_mode", 1), "Stereo Mode", stereoModeChoices, 0
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("stereo_link", 1), "Stereo Link",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float val, int) { return juce::String(val, 0) + " %"; }
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("stereo_balance", 1), "Stereo Balance",
+        juce::NormalisableRange<float>(-100.0f, 100.0f, 1.0f), 0.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float val, int) {
+            if (std::abs(val) < 0.5f)
+                return juce::String("even");
+            if (val < 0.0f)
+            {
+                int rVal = static_cast<int>(100.0f + val);
+                return "100 L | " + juce::String(rVal) + " R";
+            }
+            int lVal = static_cast<int>(100.0f - val);
+            return juce::String(lVal) + " L | 100 R";
+        }
+    ));
+
+    // 6 Parametric Bands
     const juce::StringArray shapeChoices = { "Bell", "Low Cut", "High Cut", "Low Shelf", "High Shelf", "Notch", "Band Pass", "Tilt Shelf", "Flat Tilt" };
     const juce::StringArray slopeChoices = { "6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "30 dB/oct", "36 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct", "Brickwall" };
     const juce::StringArray stereoChoices = { "Stereo", "Left", "Right", "Mid", "Side" };
 
     const std::array<float, 6> defaultFreqs = { 30.0f, 120.0f, 380.0f, 1500.0f, 6000.0f, 18000.0f };
-    const std::array<int, 6> defaultShapes = { 1, 0, 0, 0, 0, 2 }; // Band 1: Low Cut (1), Bands 2-5: Bell (0), Band 6: High Cut (2)
+    const std::array<int, 6> defaultShapes = { 1, 0, 0, 0, 0, 2 };
 
     for (int i = 0; i < 6; ++i)
     {
@@ -188,6 +223,14 @@ void SideDuckerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     bool  scListen   = scListenParam   ? scListenParam->load() > 0.5f : false;
     bool  bypass     = bypassParam     ? bypassParam->load() > 0.5f   : false;
 
+    // Stereo Section Config
+    DuckingProcessor::StereoConfig stereoConfig;
+    stereoConfig.mode           = static_cast<DuckingProcessor::StereoMode>(stereoModeParam ? static_cast<int>(stereoModeParam->load()) : 0);
+    stereoConfig.linkPercent    = stereoLinkParam ? stereoLinkParam->load() : 100.0f;
+    // Map balance from [-100, 100] to [0, 100]
+    float bal = stereoBalanceParam ? stereoBalanceParam->load() : 0.0f;
+    stereoConfig.balancePercent = (bal + 100.0f) * 0.5f;
+
     // Collect 6 parametric band configs
     std::array<DuckingProcessor::ParametricBandConfig, 6> bandConfigs;
 
@@ -203,7 +246,7 @@ void SideDuckerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
         bandConfigs[i].solo            = bandParams[i].soloParam ? bandParams[i].soloParam->load() > 0.5f : false;
     }
 
-    duckingProcessor.setParameters(amount, attack, release, outputGain, scListen, bypass, bandConfigs);
+    duckingProcessor.setParameters(amount, attack, release, outputGain, scListen, bypass, bandConfigs, stereoConfig);
 
     auto mainBus = getBusBuffer(buffer, true, 0);
     auto sidechainBus = getBusBuffer(buffer, true, 1);

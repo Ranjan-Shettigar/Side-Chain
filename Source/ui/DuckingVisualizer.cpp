@@ -77,7 +77,7 @@ void DuckingVisualizer::timerCallback()
         }
     }
 
-    float decayRate = 0.88f;
+    float decayRate = 0.86f;
     for (int i = 0; i < numSpectrumBins; ++i)
     {
         spectrumIn[i] = spectrumIn[i] * decayRate + (-80.0f) * (1.0f - decayRate);
@@ -91,7 +91,7 @@ void DuckingVisualizer::timerCallback()
     for (int b = 0; b < DuckingProcessor::NumBands; ++b)
     {
         float target = processorRef.getDuckingProcessor().getBandReductionDb(b);
-        float smoothFactor = target < smoothedReduction[b] ? 0.7f : 0.25f;
+        float smoothFactor = target < smoothedReduction[b] ? 0.75f : 0.30f;
         smoothedReduction[b] = smoothedReduction[b] + smoothFactor * (target - smoothedReduction[b]);
     }
 
@@ -129,28 +129,53 @@ float DuckingVisualizer::getMagnitudeForFrequency(const std::array<float, 2 * ff
     float mag1 = fftData[bin1];
     float mag = mag0 + frac * (mag1 - mag0);
 
-    float normalizedMag = mag / static_cast<float>(fftSize * 0.5f);
+    float normalizedMag = mag / static_cast<float>(fftSize * 0.45f);
     float db = juce::Decibels::gainToDecibels(juce::jmax(1e-5f, normalizedMag), -80.0f);
     return juce::jlimit(-80.0f, 12.0f, db);
 }
 
 void DuckingVisualizer::computeSpectrumPoints()
 {
+    std::vector<float> rawIn(numSpectrumBins, -80.0f);
+    std::vector<float> rawOut(numSpectrumBins, -80.0f);
+    std::vector<float> rawSC(numSpectrumBins, -80.0f);
+
     for (int i = 0; i < numSpectrumBins; ++i)
     {
         float freq = binFrequencies[i];
-        float targetIn = getMagnitudeForFrequency(fftDataIn, freq);
-        float targetOut = getMagnitudeForFrequency(fftDataOut, freq);
-        float targetSC = getMagnitudeForFrequency(fftDataSC, freq);
+        rawIn[i]  = getMagnitudeForFrequency(fftDataIn, freq);
+        rawOut[i] = getMagnitudeForFrequency(fftDataOut, freq);
+        rawSC[i]  = getMagnitudeForFrequency(fftDataSC, freq);
+    }
+
+    // 5-Point Gaussian Spectral Smoothing for ultra-fluid Pro-Q style curves
+    for (int i = 0; i < numSpectrumBins; ++i)
+    {
+        float targetIn = 0.0f, targetOut = 0.0f, targetSC = 0.0f;
+        float totalWeight = 0.0f;
+
+        for (int k = -2; k <= 2; ++k)
+        {
+            int idx = juce::jlimit(0, numSpectrumBins - 1, i + k);
+            float weight = (k == 0) ? 0.4f : (std::abs(k) == 1 ? 0.22f : 0.08f);
+            targetIn  += rawIn[idx]  * weight;
+            targetOut += rawOut[idx] * weight;
+            targetSC  += rawSC[idx]  * weight;
+            totalWeight += weight;
+        }
+
+        targetIn  /= totalWeight;
+        targetOut /= totalWeight;
+        targetSC  /= totalWeight;
 
         auto smoothDb = [](float current, float target) {
-            float alpha = target > current ? 0.65f : 0.25f;
+            float alpha = target > current ? 0.70f : 0.30f;
             return current + alpha * (target - current);
         };
 
-        spectrumIn[i] = smoothDb(spectrumIn[i], targetIn);
+        spectrumIn[i]  = smoothDb(spectrumIn[i], targetIn);
         spectrumOut[i] = smoothDb(spectrumOut[i], targetOut);
-        spectrumSC[i] = smoothDb(spectrumSC[i], targetSC);
+        spectrumSC[i]  = smoothDb(spectrumSC[i], targetSC);
     }
 }
 
@@ -206,7 +231,10 @@ juce::Point<float> DuckingVisualizer::getNodePosition(int bandIdx, float startX,
     if (shape == 1 || shape == 2)
         gain = 0.0f;
 
-    return { mapFrequencyToX(freq, startX, width), mapDbToY(gain, startY, height) };
+    float posX = juce::jlimit(startX + 12.0f, startX + width - 12.0f, mapFrequencyToX(freq, startX, width));
+    float posY = juce::jlimit(startY + 12.0f, startY + height - 12.0f, mapDbToY(gain, startY, height));
+
+    return { posX, posY };
 }
 
 int DuckingVisualizer::getBandNodeAtPosition(juce::Point<float> pos) const
@@ -404,23 +432,55 @@ void DuckingVisualizer::paint(juce::Graphics& g)
         g.drawText(dbText, static_cast<int>(startX + width - 36.0f), static_cast<int>(y - 10.0f), 34, 10, juce::Justification::right);
     }
 
-    // 4. Ambient Sidechain FFT Spectrum
+    // 4. Main Audio Input Spectrum (Subtle Soft Blue)
+    juce::Path inFftPath;
+    for (int i = 0; i < numSpectrumBins; ++i)
+    {
+        float x = mapFrequencyToX(binFrequencies[i], startX, width);
+        float normFft = (spectrumIn[i] + 70.0f) / 70.0f;
+        float y = startY + height - juce::jlimit(0.0f, 1.0f, normFft) * (height * 0.72f);
+
+        if (i == 0) inFftPath.startNewSubPath(x, y);
+        else inFftPath.lineTo(x, y);
+    }
+    inFftPath.lineTo(startX + width, startY + height);
+    inFftPath.lineTo(startX, startY + height);
+    inFftPath.closeSubPath();
+
+    g.setColour(CustomLookAndFeel::m3Primary.withAlpha(0.08f));
+    g.fillPath(inFftPath);
+
+    // 5. Luminous Sidechain Signal FFT Spectrum (Vibrant Mint Green #7CDB8A)
     juce::Path scFftPath;
+    juce::Path scTopLine;
     for (int i = 0; i < numSpectrumBins; ++i)
     {
         float x = mapFrequencyToX(binFrequencies[i], startX, width);
         float normFft = (spectrumSC[i] + 70.0f) / 70.0f;
-        float y = startY + height - juce::jlimit(0.0f, 1.0f, normFft) * (height * 0.5f);
+        float y = startY + height - juce::jlimit(0.0f, 1.0f, normFft) * (height * 0.80f);
 
-        if (i == 0) scFftPath.startNewSubPath(x, y);
-        else scFftPath.lineTo(x, y);
+        if (i == 0)
+        {
+            scFftPath.startNewSubPath(x, y);
+            scTopLine.startNewSubPath(x, y);
+        }
+        else
+        {
+            scFftPath.lineTo(x, y);
+            scTopLine.lineTo(x, y);
+        }
     }
     scFftPath.lineTo(startX + width, startY + height);
     scFftPath.lineTo(startX, startY + height);
     scFftPath.closeSubPath();
 
-    g.setColour(CustomLookAndFeel::m3Secondary.withAlpha(0.06f));
+    juce::ColourGradient scGrad(CustomLookAndFeel::m3Secondary.withAlpha(0.24f), 0.0f, startY + height * 0.2f,
+                                CustomLookAndFeel::m3Secondary.withAlpha(0.02f), 0.0f, startY + height, false);
+    g.setGradientFill(scGrad);
     g.fillPath(scFftPath);
+
+    g.setColour(CustomLookAndFeel::m3Secondary.withAlpha(0.75f));
+    g.strokePath(scTopLine, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved));
 
     // 5. Downward Dynamic Reduction Graph across 48 bands (M3 Coral #F48FB1)
     juce::Path reductionPath;
@@ -527,30 +587,31 @@ void DuckingVisualizer::paint(juce::Graphics& g)
         const juce::StringArray stereoNames = { "Stereo", "Left", "Right", "Mid", "Side" };
 
         juce::String freqStr = freq >= 1000.0f ? juce::String(freq / 1000.0f, 2) + " kHz" : juce::String(freq, 0) + " Hz";
-        juce::String hudText = "BAND " + juce::String(bNum) + " • " + shapeNames[shape].toUpperCase() + " • " + freqStr;
+        juce::String hudText = "BAND " + juce::String(bNum) + " | " + shapeNames[shape].toUpperCase() + " | " + freqStr;
 
         if (shape == 1 || shape == 2)
-            hudText += " • " + slopeNames[slope];
+            hudText += " | " + slopeNames[slope];
         else
-            hudText += " • " + juce::String(gain > 0 ? "+" : "") + juce::String(gain, 1) + " dB • Q " + juce::String(q, 2);
+            hudText += " | " + juce::String(gain > 0 ? "+" : "") + juce::String(gain, 1) + " dB | Q " + juce::String(q, 2);
 
-        hudText += " • " + stereoNames[stereo].toUpperCase();
+        hudText += " | " + stereoNames[stereo].toUpperCase();
 
-        // Draw Floating HUD Pill
-        int hudW = 280;
-        int hudH = 22;
+        // Dynamic width calculation so text is always fully visible and readable
+        juce::Font hudFont(11.0f, juce::Font::bold);
+        int hudW = hudFont.getStringWidth(hudText) + 24;
+        int hudH = 24;
         int hudX = juce::jlimit(static_cast<int>(startX + 8.0f), static_cast<int>(startX + width - hudW - 8.0f), static_cast<int>(activeHudPos.x - hudW / 2));
-        int hudY = (activeHudPos.y > startY + 40.0f) ? static_cast<int>(activeHudPos.y - 36.0f) : static_cast<int>(activeHudPos.y + 20.0f);
+        int hudY = (activeHudPos.y > startY + 40.0f) ? static_cast<int>(activeHudPos.y - 38.0f) : static_cast<int>(activeHudPos.y + 22.0f);
 
         auto hudRect = juce::Rectangle<float>(static_cast<float>(hudX), static_cast<float>(hudY), static_cast<float>(hudW), static_cast<float>(hudH));
-        g.setColour(CustomLookAndFeel::m3SurfaceContainerHigh.withAlpha(0.92f));
-        g.fillRoundedRectangle(hudRect, 11.0f);
+        g.setColour(CustomLookAndFeel::m3SurfaceContainerHigh.withAlpha(0.95f));
+        g.fillRoundedRectangle(hudRect, 12.0f);
 
-        g.setColour(bandColours[activeHudBand].withAlpha(0.7f));
-        g.drawRoundedRectangle(hudRect, 11.0f, 1.0f);
+        g.setColour(bandColours[activeHudBand].withAlpha(0.85f));
+        g.drawRoundedRectangle(hudRect, 12.0f, 1.2f);
 
         g.setColour(CustomLookAndFeel::m3OnSurface);
-        g.setFont(juce::Font(10.0f, juce::Font::bold));
+        g.setFont(hudFont);
         g.drawText(hudText, hudRect.toNearestInt(), juce::Justification::centred);
     }
 
