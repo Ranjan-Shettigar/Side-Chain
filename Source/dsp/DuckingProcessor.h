@@ -5,13 +5,14 @@
 #include "CustomEnvelope.h"
 
 /**
- * 48-Band Dynamic Spectral Ducking Processor with FabFilter Pro-Q 4 Inspired Parametric Sensitivity EQ
- * and Internal Custom Envelope / LFO Engine
+ * Dynamic Spectral Ducking Processor with 16 to 128 Adjustable Frequency Bands,
+ * FabFilter Pro-Q 4 Inspired Parametric Sensitivity EQ, and Custom Envelope / LFO Engine
  */
 class DuckingProcessor
 {
 public:
-    static constexpr int NumBands = 48;
+    static constexpr int MaxBands = 128;
+    static constexpr int MinBands = 16;
     static constexpr int NumParametricBands = 6;
 
     enum class SidechainSource
@@ -94,6 +95,7 @@ public:
                        bool sidechainListen,
                        bool bypass,
                        SidechainSource scSource,
+                       int numBands,
                        const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
                        const StereoConfig& stereoConfig);
 
@@ -105,16 +107,18 @@ public:
     float getCurrentGainReduction() const noexcept { return currentGainReduction.load(); }
     float getCurrentSidechainLevel() const noexcept { return currentSidechainLevel.load(); }
 
+    int getActiveNumBands() const noexcept { return activeNumBands; }
+
     float getBandReductionDb(int bandIndex) const noexcept
     {
-        if (bandIndex >= 0 && bandIndex < NumBands)
+        if (bandIndex >= 0 && bandIndex < activeNumBands)
             return bandReductionTelemetry[bandIndex].load();
         return 0.0f;
     }
 
     float getBandCenterFreq(int bandIndex) const noexcept
     {
-        if (bandIndex >= 0 && bandIndex < NumBands)
+        if (bandIndex >= 0 && bandIndex < activeNumBands)
             return bands[bandIndex].centerFreq;
         return 1000.0f;
     }
@@ -131,6 +135,7 @@ private:
     double sampleRate = 44100.0;
     int samplesPerBlock = 512;
     int numChannels = 2;
+    int activeNumBands = 48;
 
     // Master Parameters
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedAmount;
@@ -150,7 +155,7 @@ private:
     float releaseCoeff = 0.0f;
 
     void updateCoefficients();
-    void initializeBands();
+    void initializeBands(int count);
 
     void encodeToMidSide(juce::AudioBuffer<float>& buffer);
     void decodeFromMidSide(juce::AudioBuffer<float>& buffer);
@@ -172,7 +177,7 @@ private:
         float currentGainDbR = 0.0f;
     };
 
-    std::array<DynamicBand, NumBands> bands;
+    std::array<DynamicBand, MaxBands> bands;
 
     juce::AudioBuffer<float> sidechainCopyBuffer;
     juce::AudioBuffer<float> soloBuffer;
@@ -180,5 +185,5 @@ private:
     // Telemetry
     std::atomic<float> currentGainReduction { 1.0f };
     std::atomic<float> currentSidechainLevel { 0.0f };
-    std::array<std::atomic<float>, NumBands> bandReductionTelemetry;
+    std::array<std::atomic<float>, MaxBands> bandReductionTelemetry;
 };

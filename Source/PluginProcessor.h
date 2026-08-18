@@ -55,6 +55,7 @@ private:
     std::atomic<float>* bypassParam = nullptr;
     std::atomic<float>* scSourceParam = nullptr;
     std::atomic<float>* envRateParam = nullptr;
+    std::atomic<float>* spectralBandsParam = nullptr;
 
     // Master Stereo Section parameter pointers
     std::atomic<float>* stereoModeParam = nullptr;

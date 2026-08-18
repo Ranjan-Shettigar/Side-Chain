@@ -16,6 +16,7 @@ SideDuckerAudioProcessor::SideDuckerAudioProcessor()
     bypassParam        = apvts.getRawParameterValue("bypass");
     scSourceParam      = apvts.getRawParameterValue("sc_source");
     envRateParam       = apvts.getRawParameterValue("env_rate");
+    spectralBandsParam = apvts.getRawParameterValue("spectral_bands");
 
     stereoModeParam    = apvts.getRawParameterValue("stereo_mode");
     stereoLinkParam    = apvts.getRawParameterValue("stereo_link");
@@ -88,6 +89,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SideDuckerAudioProcessor::cr
     const juce::StringArray envRateChoices = { "1/2", "1/4", "1/8", "1/16", "1/32", "1/2T", "1/4T", "1/8T", "1/16T", "1/32T", "1/2D", "1/4D", "1/8D", "1/16D" };
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID("env_rate", 1), "Envelope Rate", envRateChoices, 1 // 1/4
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID("spectral_bands", 1), "EQ Bands", 16, 128, 48
     ));
 
     // Master Stereo Controls
@@ -261,7 +266,8 @@ void SideDuckerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
         bandConfigs[i].solo            = bandParams[i].soloParam ? bandParams[i].soloParam->load() > 0.5f : false;
     }
 
-    duckingProcessor.setParameters(amount, attack, release, outputGain, scListen, bypass, scSource, bandConfigs, stereoConfig);
+    int numBands = spectralBandsParam ? static_cast<int>(spectralBandsParam->load()) : 48;
+    duckingProcessor.setParameters(amount, attack, release, outputGain, scListen, bypass, scSource, numBands, bandConfigs, stereoConfig);
 
     auto mainBus = getBusBuffer(buffer, true, 0);
     auto sidechainBus = getBusBuffer(buffer, true, 1);

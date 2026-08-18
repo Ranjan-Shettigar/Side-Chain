@@ -154,9 +154,9 @@ void EnvelopeEditor::mouseDown(const juce::MouseEvent& e)
         {
             juce::PopupMenu m;
             m.addItem(1, "Delete Point");
-            m.addItem(2, "Set to 100% Ducking");
-            m.addItem(3, "Set to 50% Ducking");
-            m.addItem(4, "Set to 0% Ducking");
+            m.addItem(2, "Set to 100% (Full Volume)");
+            m.addItem(3, "Set to 50% Volume");
+            m.addItem(4, "Set to 0% (Ducked / Silence)");
             m.addItem(5, "Curve Tension (+0.5)");
             m.addItem(6, "Curve Tension (-0.5)");
             m.addItem(7, "Reset Tension (Linear)");

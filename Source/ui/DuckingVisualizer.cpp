@@ -88,7 +88,8 @@ void DuckingVisualizer::timerCallback()
     if (hadNewFft)
         computeSpectrumPoints();
 
-    for (int b = 0; b < DuckingProcessor::NumBands; ++b)
+    int activeBands = processorRef.getDuckingProcessor().getActiveNumBands();
+    for (int b = 0; b < activeBands; ++b)
     {
         float target = processorRef.getDuckingProcessor().getBandReductionDb(b);
         float smoothFactor = target < smoothedReduction[b] ? 0.75f : 0.30f;
@@ -482,11 +483,12 @@ void DuckingVisualizer::paint(juce::Graphics& g)
     g.setColour(CustomLookAndFeel::m3Secondary.withAlpha(0.75f));
     g.strokePath(scTopLine, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved));
 
-    // 5. Downward Dynamic Reduction Graph across 48 bands (M3 Coral #F48FB1)
+    // 5. Downward Dynamic Reduction Graph across active frequency bands
     juce::Path reductionPath;
     reductionPath.startNewSubPath(startX, zeroY);
 
-    for (int b = 0; b < DuckingProcessor::NumBands; ++b)
+    int activeBands = processorRef.getDuckingProcessor().getActiveNumBands();
+    for (int b = 0; b < activeBands; ++b)
     {
         float freq = processorRef.getDuckingProcessor().getBandCenterFreq(b);
         float x = mapFrequencyToX(freq, startX, width);

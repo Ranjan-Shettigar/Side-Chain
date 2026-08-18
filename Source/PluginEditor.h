@@ -67,6 +67,14 @@ private:
     juce::Slider bandQSlider;
     juce::ToggleButton bandSoloButton;
     juce::ToggleButton bandBypassButton;
+    juce::TextButton resetEqButton;
+
+    // EQ Presets & Spectral Bands Resolution Control
+    juce::ComboBox eqPresetComboBox;
+    juce::Label eqPresetLabel;
+
+    juce::Slider spectralBandsSlider;
+    juce::Label spectralBandsLabel;
 
     juce::Label bandShapeLabel;
     juce::Label bandSlopeLabel;
@@ -88,6 +96,7 @@ private:
     std::unique_ptr<SliderAttachment> outputGainAttachment;
     std::unique_ptr<ButtonAttachment> scListenAttachment;
     std::unique_ptr<ButtonAttachment> bypassAttachment;
+    std::unique_ptr<SliderAttachment> spectralBandsAttachment;
 
     // Master Stereo Attachments
     std::unique_ptr<SliderAttachment> stereoLinkAttachment;

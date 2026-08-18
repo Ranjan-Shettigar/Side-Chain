@@ -58,8 +58,8 @@ private:
     std::vector<float> spectrumSC;
     std::vector<float> binFrequencies;
 
-    // Smoothed 48-band reduction
-    std::array<float, DuckingProcessor::NumBands> smoothedReduction;
+    // Smoothed dynamic band reduction
+    std::array<float, DuckingProcessor::MaxBands> smoothedReduction;
 
     int selectedBandIndex = 0;
     int hoveredBandIndex = -1;

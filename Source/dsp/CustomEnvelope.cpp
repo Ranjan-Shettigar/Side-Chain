@@ -33,16 +33,16 @@ float CustomEnvelope::getBeatsForRate(Rate rate)
         case Rate::Rate1_16:  return 0.25f;
         case Rate::Rate1_32:  return 0.125f;
 
-        case Rate::Rate1_2T:  return 2.0f * (2.0f / 3.0f); // 1.333 beats
-        case Rate::Rate1_4T:  return 1.0f * (2.0f / 3.0f); // 0.666 beats
-        case Rate::Rate1_8T:  return 0.5f * (2.0f / 3.0f); // 0.333 beats
-        case Rate::Rate1_16T: return 0.25f * (2.0f / 3.0f); // 0.166 beats
+        case Rate::Rate1_2T:  return 2.0f * (2.0f / 3.0f);
+        case Rate::Rate1_4T:  return 1.0f * (2.0f / 3.0f);
+        case Rate::Rate1_8T:  return 0.5f * (2.0f / 3.0f);
+        case Rate::Rate1_16T: return 0.25f * (2.0f / 3.0f);
         case Rate::Rate1_32T: return 0.125f * (2.0f / 3.0f);
 
-        case Rate::Rate1_2D:  return 2.0f * 1.5f; // 3.0 beats
-        case Rate::Rate1_4D:  return 1.0f * 1.5f; // 1.5 beats
-        case Rate::Rate1_8D:  return 0.5f * 1.5f; // 0.75 beats
-        case Rate::Rate1_16D: return 0.25f * 1.5f; // 0.375 beats
+        case Rate::Rate1_2D:  return 2.0f * 1.5f;
+        case Rate::Rate1_4D:  return 1.0f * 1.5f;
+        case Rate::Rate1_8D:  return 0.5f * 1.5f;
+        case Rate::Rate1_16D: return 0.25f * 1.5f;
     }
     return 1.0f;
 }
@@ -51,8 +51,8 @@ void CustomEnvelope::ensureEndpoints()
 {
     if (points.empty())
     {
-        points.push_back({ 0.0f, 1.0f, 0.0f });
-        points.push_back({ 1.0f, 0.0f, 0.0f });
+        points.push_back({ 0.0f, 0.0f, 0.0f });
+        points.push_back({ 1.0f, 1.0f, 0.0f });
         return;
     }
 
@@ -141,7 +141,6 @@ bool CustomEnvelope::updatePoint(int index, float newX, float newY, float newTen
     if (index < 0 || index >= static_cast<int>(points.size()))
         return false;
 
-    // Prevent moving first/last points in X
     if (index == 0)
         newX = 0.0f;
     else if (index == static_cast<int>(points.size()) - 1)
@@ -155,14 +154,15 @@ bool CustomEnvelope::updatePoint(int index, float newX, float newY, float newTen
     return true;
 }
 
+// VolumeShaper / Kickstart / LFO Tool Standard (y = 0: silence/ducked at kick impact; y = 1: full volume)
 void CustomEnvelope::loadPresetClassicPump()
 {
     std::lock_guard<std::mutex> lock(pointMutex);
     points = {
-        { 0.0f, 1.0f, 0.4f },
-        { 0.12f, 0.95f, 0.6f },
-        { 0.48f, 0.05f, -0.3f },
-        { 1.0f, 0.0f, 0.0f }
+        { 0.0f, 0.0f, 0.45f },
+        { 0.12f, 0.15f, 0.50f },
+        { 0.48f, 0.92f, -0.25f },
+        { 1.0f, 1.0f, 0.0f }
     };
     sortAndClampPoints();
 }
@@ -171,9 +171,9 @@ void CustomEnvelope::loadPresetKickDip()
 {
     std::lock_guard<std::mutex> lock(pointMutex);
     points = {
-        { 0.0f, 1.0f, 0.7f },
-        { 0.25f, 0.0f, -0.2f },
-        { 1.0f, 0.0f, 0.0f }
+        { 0.0f, 0.0f, 0.65f },
+        { 0.22f, 1.0f, -0.15f },
+        { 1.0f, 1.0f, 0.0f }
     };
     sortAndClampPoints();
 }
@@ -182,14 +182,14 @@ void CustomEnvelope::loadPresetGate16th()
 {
     std::lock_guard<std::mutex> lock(pointMutex);
     points = {
-        { 0.0f, 1.0f, 0.0f },
-        { 0.24f, 1.0f, 0.0f },
-        { 0.25f, 0.0f, 0.0f },
-        { 0.49f, 0.0f, 0.0f },
-        { 0.50f, 1.0f, 0.0f },
-        { 0.74f, 1.0f, 0.0f },
-        { 0.75f, 0.0f, 0.0f },
-        { 1.0f, 0.0f, 0.0f }
+        { 0.0f, 0.0f, 0.0f },
+        { 0.24f, 0.0f, 0.0f },
+        { 0.25f, 1.0f, 0.0f },
+        { 0.49f, 1.0f, 0.0f },
+        { 0.50f, 0.0f, 0.0f },
+        { 0.74f, 0.0f, 0.0f },
+        { 0.75f, 1.0f, 0.0f },
+        { 1.0f, 1.0f, 0.0f }
     };
     sortAndClampPoints();
 }
@@ -198,8 +198,8 @@ void CustomEnvelope::loadPresetSawRamp()
 {
     std::lock_guard<std::mutex> lock(pointMutex);
     points = {
-        { 0.0f, 1.0f, -0.5f },
-        { 1.0f, 0.0f, 0.0f }
+        { 0.0f, 0.0f, -0.3f },
+        { 1.0f, 1.0f, 0.0f }
     };
     sortAndClampPoints();
 }
@@ -208,9 +208,9 @@ void CustomEnvelope::loadPresetSmoothSwell()
 {
     std::lock_guard<std::mutex> lock(pointMutex);
     points = {
-        { 0.0f, 1.0f, 0.0f },
-        { 0.5f, 0.0f, 0.0f },
-        { 1.0f, 1.0f, 0.0f }
+        { 0.0f, 0.0f, 0.3f },
+        { 0.5f, 1.0f, -0.3f },
+        { 1.0f, 0.0f, 0.0f }
     };
     sortAndClampPoints();
 }
@@ -221,7 +221,7 @@ float CustomEnvelope::evaluateAt(float phase) const
 
     std::lock_guard<std::mutex> lock(pointMutex);
     if (points.empty())
-        return 0.0f;
+        return 1.0f;
 
     if (points.size() == 1)
         return points[0].y;

@@ -2,26 +2,46 @@
 
 DuckingProcessor::DuckingProcessor()
 {
-    initializeBands();
-    for (int i = 0; i < NumBands; ++i)
+    initializeBands(48);
+    for (int i = 0; i < MaxBands; ++i)
         bandReductionTelemetry[i].store(0.0f);
 }
 
-void DuckingProcessor::initializeBands()
+void DuckingProcessor::initializeBands(int count)
 {
+    activeNumBands = juce::jlimit(MinBands, MaxBands, count);
     const float minLog = std::log10(20.0f);
     const float maxLog = std::log10(20000.0f);
 
-    for (int i = 0; i < NumBands; ++i)
+    float bandQ = 2.4f * (static_cast<float>(activeNumBands) / 48.0f);
+    bandQ = juce::jlimit(1.2f, 8.0f, bandQ);
+
+    for (int i = 0; i < activeNumBands; ++i)
     {
-        float norm = static_cast<float>(i) / static_cast<float>(NumBands - 1);
+        float norm = static_cast<float>(i) / static_cast<float>(activeNumBands - 1);
         float logFreq = minLog + norm * (maxLog - minLog);
         bands[i].centerFreq = std::pow(10.0f, logFreq);
-        bands[i].q = 2.4f;
+        bands[i].q = bandQ;
         bands[i].envelopeStateL = 0.0f;
         bands[i].envelopeStateR = 0.0f;
         bands[i].currentGainDbL = 0.0f;
         bands[i].currentGainDbR = 0.0f;
+
+        if (sampleRate > 0.0)
+        {
+            auto scCoeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, bands[i].centerFreq, bands[i].q);
+            bands[i].scFilterL.coefficients = scCoeffs;
+            bands[i].scFilterR.coefficients = scCoeffs;
+
+            auto mainCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, bands[i].centerFreq, bands[i].q, 1.0f);
+            bands[i].mainEqL.coefficients = mainCoeffs;
+            bands[i].mainEqR.coefficients = mainCoeffs;
+
+            bands[i].scFilterL.reset();
+            bands[i].scFilterR.reset();
+            bands[i].mainEqL.reset();
+            bands[i].mainEqR.reset();
+        }
     }
 }
 
@@ -38,32 +58,13 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
     smoothedOutputGain.reset(sampleRate, 0.02);
     customEnvelope.setSampleRate(sampleRate);
 
-    for (int i = 0; i < NumBands; ++i)
-    {
-        auto scCoeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, bands[i].centerFreq, bands[i].q);
-        bands[i].scFilterL.coefficients = scCoeffs;
-        bands[i].scFilterR.coefficients = scCoeffs;
-
-        auto mainCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, bands[i].centerFreq, bands[i].q, 1.0f);
-        bands[i].mainEqL.coefficients = mainCoeffs;
-        bands[i].mainEqR.coefficients = mainCoeffs;
-
-        bands[i].scFilterL.reset();
-        bands[i].scFilterR.reset();
-        bands[i].mainEqL.reset();
-        bands[i].mainEqR.reset();
-        bands[i].envelopeStateL = 0.0f;
-        bands[i].envelopeStateR = 0.0f;
-        bands[i].currentGainDbL = 0.0f;
-        bands[i].currentGainDbR = 0.0f;
-    }
-
+    initializeBands(activeNumBands);
     reset();
 }
 
 void DuckingProcessor::reset()
 {
-    for (int i = 0; i < NumBands; ++i)
+    for (int i = 0; i < MaxBands; ++i)
     {
         bands[i].scFilterL.reset();
         bands[i].scFilterR.reset();
@@ -249,6 +250,7 @@ void DuckingProcessor::setParameters(float amountPercent,
                                      bool sidechainListen,
                                      bool bypass,
                                      SidechainSource scSource,
+                                     int numBands,
                                      const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
                                      const StereoConfig& stereoConfig)
 {
@@ -260,6 +262,11 @@ void DuckingProcessor::setParameters(float amountPercent,
         attackTimeMs = attackMs;
         releaseTimeMs = releaseMs;
         updateCoefficients();
+    }
+
+    if (numBands != activeNumBands)
+    {
+        initializeBands(numBands);
     }
 
     listenSidechain = sidechainListen;
@@ -281,7 +288,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (numSamples == 0)
         return;
 
-    // Check if any band is in Solo / Audition mode
     int soloBandIndex = -1;
     for (int b = 0; b < NumParametricBands; ++b)
     {
@@ -292,7 +298,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         }
     }
 
-    // If bypassed, pass audio through
     if (isBypassed)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -302,7 +307,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
             float inMono = 0.5f * (inL + inR);
             visualizerFifo.pushSample(inMono, inMono, 0.0f, 1.0f);
         }
-        for (int b = 0; b < NumBands; ++b)
+        for (int b = 0; b < activeNumBands; ++b)
             bandReductionTelemetry[b].store(0.0f);
 
         currentGainReduction.store(1.0f);
@@ -313,7 +318,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (sidechainCopyBuffer.getNumSamples() < numSamples)
         sidechainCopyBuffer.setSize(2, numSamples, false, false, true);
 
-    // Prepare sidechain signal based on Source Mode (External Audio vs Custom Envelope)
     if (currentScSource == SidechainSource::InternalEnvelope)
     {
         float* scL = sidechainCopyBuffer.getWritePointer(0);
@@ -321,9 +325,10 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
 
         for (int i = 0; i < numSamples; ++i)
         {
-            float envVal = customEnvelope.getNextSample(playHead);
-            scL[i] = envVal;
-            scR[i] = envVal;
+            float passGain = customEnvelope.getNextSample(playHead);
+            float duckDepth = juce::jlimit(0.0f, 1.0f, 1.0f - passGain);
+            scL[i] = duckDepth;
+            scR[i] = duckDepth;
         }
     }
     else if (numSidechainChannels > 0)
@@ -339,7 +344,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         sidechainCopyBuffer.clear();
     }
 
-    // Sidechain Master Listen or Per-Band Solo Audition Mode
     if (listenSidechain || soloBandIndex >= 0)
     {
         const float* srcL = sidechainCopyBuffer.getReadPointer(0);
@@ -356,7 +360,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
             float scMono = 0.5f * (srcL[i] + srcR[i]);
             visualizerFifo.pushSample(scMono, scMono, scMono, 1.0f);
         }
-        for (int b = 0; b < NumBands; ++b)
+        for (int b = 0; b < activeNumBands; ++b)
             bandReductionTelemetry[b].store(0.0f);
 
         currentGainReduction.store(1.0f);
@@ -367,7 +371,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     juce::AudioBuffer<float> originalInputCopy;
     originalInputCopy.makeCopyOf(mainBuffer);
 
-    // Stereo Mode: encode to Mid/Side if needed
     bool useMidSide = (currentStereo.mode == StereoMode::MidSide) && (numMainChannels >= 2);
     if (useMidSide)
     {
@@ -387,8 +390,8 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     const float* scL = sidechainCopyBuffer.getReadPointer(0);
     const float* scR = sidechainCopyBuffer.getReadPointer(1);
 
-    // Process all 48 frequency bands
-    for (int b = 0; b < NumBands; ++b)
+    // Process all active frequency bands (16 to 128)
+    for (int b = 0; b < activeNumBands; ++b)
     {
         auto& band = bands[b];
         float centerF = band.centerFreq;
@@ -403,7 +406,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
 
         if (currentScSource == SidechainSource::InternalEnvelope)
         {
-            // For custom envelope, evaluate envelope magnitude directly
             for (int i = 0; i < numSamples; ++i)
             {
                 float scMagL = std::abs(scL[i]);
