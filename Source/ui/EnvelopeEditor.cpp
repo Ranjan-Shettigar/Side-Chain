@@ -13,13 +13,10 @@ EnvelopeEditor::EnvelopeEditor(SideDuckerAudioProcessor& processor)
     addAndMakeVisible(rateLabel);
 
     rateComboBox.addItemList({ "1/2", "1/4", "1/8", "1/16", "1/32", "1/2T", "1/4T", "1/8T", "1/16T", "1/32T", "1/2D", "1/4D", "1/8D", "1/16D" }, 1);
-    rateComboBox.setSelectedId(2, juce::dontSendNotification); // Default 1/4
-    rateComboBox.onChange = [this]() {
-        int id = rateComboBox.getSelectedId() - 1;
-        envelopeRef.setRate(static_cast<CustomEnvelope::Rate>(id));
-        repaint();
-    };
     addAndMakeVisible(rateComboBox);
+    rateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        processorRef.getAPVTS(), "env_rate", rateComboBox
+    );
 
     // Snap to Grid
     snapLabel.setText("SNAP", juce::dontSendNotification);

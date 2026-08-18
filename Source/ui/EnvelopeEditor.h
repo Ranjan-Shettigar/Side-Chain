@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
 #include "../dsp/CustomEnvelope.h"
 
 class SideDuckerAudioProcessor;
@@ -38,6 +39,8 @@ private:
     juce::Label rateLabel;
     juce::Label snapLabel;
     juce::Label presetLabel;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> rateAttachment;
 
     int draggedPointIndex = -1;
     int hoveredPointIndex = -1;

@@ -95,6 +95,10 @@ void DuckingVisualizer::timerCallback()
         float smoothFactor = target < smoothedReduction[b] ? 0.75f : 0.30f;
         smoothedReduction[b] = smoothedReduction[b] + smoothFactor * (target - smoothedReduction[b]);
     }
+    for (int b = activeBands; b < DuckingProcessor::MaxBands; ++b)
+    {
+        smoothedReduction[b] = 0.0f;
+    }
 
     repaint();
 }

@@ -178,89 +178,132 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
         updateSelectedBandUI(currentSelectedBand);
         visualizer.repaint();
     };
-    // EQ Presets Dropdown
+    // EQ Presets Label & Dropdown
+    eqPresetLabel.setText("EQ PRESET", juce::dontSendNotification);
+    eqPresetLabel.setFont(juce::Font(10.0f, juce::Font::bold));
+    eqPresetLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::m3OnSurfaceVariant);
+    addAndMakeVisible(eqPresetLabel);
+
     eqPresetComboBox.addItemList({
-        "Factory Default",
-        "Vocal Carve (Mid Dip + Air)",
-        "Sub & Kick Tightener (30-150Hz)",
-        "Snare Crack Punch (200Hz & 3.5k)",
-        "Master Bus Gentle Duck",
-        "Hi-Hat & Cymbals Tamer",
-        "Bass Mud Cleaner (250-500Hz)"
+        "1. Factory Default (Flat 6-Band)",
+        "2. Kick & Sub Squeeze (30-100Hz)",
+        "3. Kick Punch Pocket (60-120Hz)",
+        "4. Vocal Clarity Carve (1k-4kHz)",
+        "5. Vocal Warmth & Body (300Hz & 3.5k)",
+        "6. Snare Body & Snap (200Hz & 4kHz)",
+        "7. Bass Mud Cleaner (200-500Hz)",
+        "8. Hi-Hat & Air Tamer (8k-16kHz)",
+        "9. Master Bus Gentle Duck",
+        "10. EDM Synth Pump (Bass & Mid Dip)",
+        "11. Acoustic Guitar Duck (500Hz-3kHz)"
     }, 1);
     eqPresetComboBox.setText("EQ Presets", juce::dontSendNotification);
     eqPresetComboBox.onChange = [this]() {
         int id = eqPresetComboBox.getSelectedId();
         auto& apvts = processorRef.getAPVTS();
 
-        auto setBand = [&](int bandIdx, int shape, int slope, float freq, float gain, float q) {
+        auto setBand = [&](int bandIdx, int shape, int slope, int stereo, float freq, float gain, float q, bool bypassed) {
             int bNum = bandIdx + 1;
             juce::String prefix = "b" + juce::String(bNum) + "_";
             if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(prefix + "shape"))) *p = shape;
             if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(prefix + "slope"))) *p = slope;
+            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(prefix + "stereo"))) *p = stereo;
             if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "freq"))) *p = freq;
             if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "gain"))) *p = gain;
             if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(prefix + "q"))) *p = q;
-            if (auto* p = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter(prefix + "bypass"))) *p = false;
+            if (auto* p = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter(prefix + "bypass"))) *p = bypassed;
+            if (auto* p = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter(prefix + "solo"))) *p = false;
         };
 
         switch (id)
         {
-            case 1: // Factory Default
-                setBand(0, 1, 1, 30.0f, 0.0f, 1.4f);
-                setBand(1, 0, 1, 120.0f, 0.0f, 1.4f);
-                setBand(2, 0, 1, 380.0f, 0.0f, 1.4f);
-                setBand(3, 0, 1, 1500.0f, 0.0f, 1.4f);
-                setBand(4, 0, 1, 6000.0f, 0.0f, 1.4f);
-                setBand(5, 2, 1, 18000.0f, 0.0f, 1.4f);
+            case 1: // Factory Default (Flat 6-Band)
+                setBand(0, 1, 1, 0, 30.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 120.0f, 0.0f, 1.4f, false);
+                setBand(2, 0, 1, 0, 380.0f, 0.0f, 1.4f, false);
+                setBand(3, 0, 1, 0, 1500.0f, 0.0f, 1.4f, false);
+                setBand(4, 0, 1, 0, 6000.0f, 0.0f, 1.4f, false);
+                setBand(5, 2, 1, 0, 18000.0f, 0.0f, 1.4f, false);
                 break;
-            case 2: // Vocal Carve (Mid Dip + Air)
-                setBand(0, 1, 1, 80.0f, 0.0f, 1.4f);
-                setBand(1, 0, 1, 300.0f, +2.5f, 1.8f);
-                setBand(2, 0, 1, 1200.0f, +6.0f, 2.2f);
-                setBand(3, 0, 1, 3500.0f, +4.5f, 2.0f);
-                setBand(4, 4, 1, 10000.0f, +3.0f, 0.7f); // High shelf air
-                setBand(5, 2, 1, 19000.0f, 0.0f, 1.4f);
+            case 2: // Kick & Sub Squeeze (30-100Hz Focus)
+                setBand(0, 1, 3, 0, 25.0f, 0.0f, 1.4f, false); // 24dB Low Cut
+                setBand(1, 0, 1, 0, 55.0f, +8.0f, 3.2f, false); // Heavy sub duck sensitivity
+                setBand(2, 0, 1, 0, 110.0f, +5.0f, 2.8f, false);
+                setBand(3, 0, 1, 0, 400.0f, -4.0f, 1.4f, false);
+                setBand(4, 0, 1, 0, 2500.0f, -6.0f, 1.0f, false);
+                setBand(5, 2, 2, 0, 8000.0f, 0.0f, 1.4f, false);
                 break;
-            case 3: // Sub & Kick Tightener (30-150Hz Focus)
-                setBand(0, 1, 3, 25.0f, 0.0f, 1.4f); // 24dB Low Cut
-                setBand(1, 0, 1, 60.0f, +7.0f, 3.0f); // Kick sub punch
-                setBand(2, 0, 1, 110.0f, +5.0f, 2.5f);
-                setBand(3, 0, 1, 400.0f, -4.0f, 1.4f);
-                setBand(4, 0, 1, 2500.0f, -6.0f, 1.0f);
-                setBand(5, 2, 2, 8000.0f, 0.0f, 1.4f);
+            case 3: // Kick Punch Pocket (60-120Hz)
+                setBand(0, 1, 1, 0, 35.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 85.0f, +9.0f, 3.5f, false); // Kick fundamental punch
+                setBand(2, 0, 1, 0, 180.0f, +4.0f, 2.5f, false);
+                setBand(3, 0, 1, 0, 800.0f, -3.0f, 1.2f, false);
+                setBand(4, 0, 1, 0, 3000.0f, +2.0f, 2.0f, false);
+                setBand(5, 2, 1, 0, 16000.0f, 0.0f, 1.4f, false);
                 break;
-            case 4: // Snare Crack Punch (200Hz & 3.5k)
-                setBand(0, 1, 1, 100.0f, 0.0f, 1.4f);
-                setBand(1, 0, 1, 200.0f, +6.0f, 3.0f); // Snare body
-                setBand(2, 0, 1, 900.0f, -2.0f, 1.5f);
-                setBand(3, 0, 1, 3500.0f, +7.5f, 2.8f); // Snare snap
-                setBand(4, 0, 1, 8000.0f, +3.0f, 1.5f);
-                setBand(5, 2, 1, 18000.0f, 0.0f, 1.4f);
+            case 4: // Vocal Clarity Carve (1k-4kHz)
+                setBand(0, 1, 1, 0, 80.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 300.0f, -2.0f, 1.5f, false);
+                setBand(2, 0, 1, 0, 1200.0f, +6.0f, 2.2f, false); // Vocal core
+                setBand(3, 0, 1, 0, 3500.0f, +7.5f, 2.5f, false); // Articulation
+                setBand(4, 4, 1, 0, 10000.0f, +3.0f, 0.7f, false); // High shelf air
+                setBand(5, 2, 1, 0, 19000.0f, 0.0f, 1.4f, false);
                 break;
-            case 5: // Master Bus Gentle Duck
-                setBand(0, 1, 1, 20.0f, 0.0f, 0.7f);
-                setBand(1, 0, 1, 100.0f, +1.5f, 1.0f);
-                setBand(2, 0, 1, 500.0f, +1.0f, 1.0f);
-                setBand(3, 0, 1, 2000.0f, +1.5f, 1.0f);
-                setBand(4, 0, 1, 7000.0f, +1.0f, 1.0f);
-                setBand(5, 2, 1, 20000.0f, 0.0f, 0.7f);
+            case 5: // Vocal Warmth & Body (300Hz & 3.5k)
+                setBand(0, 1, 1, 0, 60.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 280.0f, +6.5f, 2.8f, false); // Vocal chest warmth
+                setBand(2, 0, 1, 0, 900.0f, -1.5f, 1.4f, false);
+                setBand(3, 0, 1, 0, 3200.0f, +5.5f, 2.2f, false); // Presence
+                setBand(4, 4, 1, 0, 8000.0f, +2.5f, 0.8f, false);
+                setBand(5, 2, 1, 0, 18000.0f, 0.0f, 1.4f, false);
                 break;
-            case 6: // Hi-Hat & Cymbals Tamer
-                setBand(0, 1, 3, 3000.0f, 0.0f, 1.4f);
-                setBand(1, 0, 1, 6000.0f, +4.0f, 2.0f);
-                setBand(2, 0, 1, 9000.0f, +6.5f, 2.5f);
-                setBand(3, 0, 1, 12500.0f, +5.0f, 2.0f);
-                setBand(4, 4, 1, 15000.0f, +3.5f, 0.7f);
-                setBand(5, 2, 1, 20000.0f, 0.0f, 1.4f);
+            case 6: // Snare Body & Snap (200Hz & 4kHz)
+                setBand(0, 1, 1, 0, 90.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 210.0f, +7.5f, 3.2f, false); // Snare body
+                setBand(2, 0, 1, 0, 850.0f, -3.0f, 1.5f, false);
+                setBand(3, 0, 1, 0, 3800.0f, +8.0f, 3.0f, false); // Snare crack
+                setBand(4, 0, 1, 0, 8000.0f, +3.0f, 1.6f, false);
+                setBand(5, 2, 1, 0, 18000.0f, 0.0f, 1.4f, false);
                 break;
-            case 7: // Bass Mud Cleaner (250-500Hz)
-                setBand(0, 1, 1, 40.0f, 0.0f, 1.4f);
-                setBand(1, 0, 1, 80.0f, -2.0f, 1.4f);
-                setBand(2, 0, 1, 280.0f, +7.0f, 3.2f); // Focus on mud zone
-                setBand(3, 0, 1, 450.0f, +6.0f, 3.0f);
-                setBand(4, 0, 1, 2000.0f, -3.0f, 1.0f);
-                setBand(5, 2, 1, 16000.0f, 0.0f, 1.4f);
+            case 7: // Bass Mud Cleaner (200-500Hz)
+                setBand(0, 1, 1, 0, 40.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 90.0f, -2.0f, 1.5f, false);
+                setBand(2, 0, 1, 0, 260.0f, +8.0f, 3.5f, false); // Mud focus
+                setBand(3, 0, 1, 0, 480.0f, +6.0f, 3.0f, false); // Buildup
+                setBand(4, 0, 1, 0, 2200.0f, -4.0f, 1.2f, false);
+                setBand(5, 2, 1, 0, 16000.0f, 0.0f, 1.4f, false);
+                break;
+            case 8: // Hi-Hat & Air Tamer (8k-16kHz)
+                setBand(0, 1, 3, 0, 3000.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 6000.0f, +4.0f, 2.0f, false);
+                setBand(2, 0, 1, 0, 9000.0f, +7.0f, 2.6f, false);
+                setBand(3, 0, 1, 0, 12500.0f, +6.0f, 2.2f, false);
+                setBand(4, 4, 1, 0, 15000.0f, +4.0f, 0.7f, false);
+                setBand(5, 2, 1, 0, 20000.0f, 0.0f, 1.4f, false);
+                break;
+            case 9: // Master Bus Gentle Duck
+                setBand(0, 1, 0, 0, 20.0f, 0.0f, 0.7f, false);
+                setBand(1, 0, 1, 0, 80.0f, +2.0f, 1.0f, false);
+                setBand(2, 0, 1, 0, 400.0f, +1.5f, 1.0f, false);
+                setBand(3, 0, 1, 0, 2000.0f, +2.0f, 1.0f, false);
+                setBand(4, 0, 1, 0, 7000.0f, +1.5f, 1.0f, false);
+                setBand(5, 2, 0, 0, 20000.0f, 0.0f, 0.7f, false);
+                break;
+            case 10: // EDM Synth Pump (Bass & Mid Dip)
+                setBand(0, 1, 2, 0, 35.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 65.0f, +9.0f, 2.8f, false);
+                setBand(2, 0, 1, 0, 220.0f, +6.0f, 2.2f, false);
+                setBand(3, 0, 1, 0, 1000.0f, +4.0f, 1.8f, false);
+                setBand(4, 4, 1, 0, 6500.0f, -2.0f, 0.8f, false);
+                setBand(5, 2, 1, 0, 18000.0f, 0.0f, 1.4f, false);
+                break;
+            case 11: // Acoustic Guitar Duck (500Hz-3kHz)
+                setBand(0, 1, 1, 0, 70.0f, 0.0f, 1.4f, false);
+                setBand(1, 0, 1, 0, 180.0f, -3.0f, 1.4f, false);
+                setBand(2, 0, 1, 0, 650.0f, +6.0f, 2.5f, false);
+                setBand(3, 0, 1, 0, 1800.0f, +7.0f, 2.8f, false);
+                setBand(4, 0, 1, 0, 3200.0f, +5.0f, 2.2f, false);
+                setBand(5, 2, 1, 0, 17000.0f, 0.0f, 1.4f, false);
                 break;
         }
 
@@ -270,8 +313,9 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     addAndMakeVisible(eqPresetComboBox);
 
     // Spectral Bands Resolution Knob (16 to 128)
-    setupRotaryControl(spectralBandsSlider, spectralBandsLabel, "BANDS", "");
+    setupRotaryControl(spectralBandsSlider, spectralBandsLabel, "EQ BANDS", " Bands");
     spectralBandsSlider.setName("Spectral Bands");
+    spectralBandsSlider.setNumDecimalPlacesToDisplay(0);
     addAndMakeVisible(spectralBandsSlider);
     spectralBandsAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "spectral_bands", spectralBandsSlider);
 
@@ -483,7 +527,7 @@ void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
 
     // Divider separating Band Parameters from Global Presets & Resolution
     g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.35f));
-    g.drawVerticalLine(605, 298.0f, 388.0f);
+    g.drawVerticalLine(470, 298.0f, 388.0f);
 
     // 2. Bottom Master Card (190px height)
     auto bottomArea = juce::Rectangle<int>(16, 404, getWidth() - 32, 190).toFloat();
@@ -517,7 +561,8 @@ void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
     // Footer Bar
     g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.5f));
     g.setFont(juce::Font(10.0f, juce::Font::plain));
-    g.drawText("48-Band High Resolution Spectral Engine | Dual Trigger Sidechain", 18, getHeight() - 24, 380, 18, juce::Justification::centredLeft);
+    int activeBands = processorRef.getDuckingProcessor().getActiveNumBands();
+    g.drawText(juce::String(activeBands) + "-Band High Resolution Spectral Engine | Dual Trigger Sidechain", 18, getHeight() - 24, 400, 18, juce::Justification::centredLeft);
 
     bool isEnvelope = (processorRef.getDuckingProcessor().getSidechainSource() == DuckingProcessor::SidechainSource::InternalEnvelope);
     float scLevel = processorRef.getDuckingProcessor().getCurrentSidechainLevel();
@@ -549,38 +594,39 @@ void SideDuckerAudioProcessorEditor::resized()
     int bandCardY = 290;
 
     // Row 1 of Band Card (Pills & Title & Toggles: y = 298, height = 22)
-    int pillStartX = 28;
+    int pillStartX = 26;
     int pillY = bandCardY + 8;
-    int pillW = 22;
+    int pillW = 20;
     int pillH = 22;
     for (int i = 0; i < 6; ++i)
     {
         bandSelectButtons[i].setBounds(pillStartX + i * (pillW + 3), pillY, pillW, pillH);
     }
 
-    int titleStartX = pillStartX + 6 * (pillW + 3) + 8;
-    bandTitleLabel.setBounds(titleStartX, pillY, 130, 22);
+    int titleStartX = pillStartX + 6 * (pillW + 3) + 6;
+    bandTitleLabel.setBounds(titleStartX, pillY, 126, 22);
 
-    bandSoloButton.setBounds(430, pillY, 72, 22);
-    bandBypassButton.setBounds(510, pillY, 76, 22);
+    bandSoloButton.setBounds(300, pillY, 70, 22);
+    bandBypassButton.setBounds(376, pillY, 76, 22);
 
-    // Global EQ Tools (Right Zone: x > 605)
-    eqPresetComboBox.setBounds(620, pillY, 140, 22);
-    resetEqButton.setBounds(766, pillY, 72, 22);
+    // Global EQ Tools (Right Zone: x > 470)
+    eqPresetLabel.setBounds(486, pillY + 1, 74, 20);
+    eqPresetComboBox.setBounds(564, pillY, 204, 22);
+    resetEqButton.setBounds(774, pillY, 72, 22);
 
     // Row 2 of Band Card (Controls: y = 330, height = 58)
     int ctrlY = bandCardY + 36;
-    int startComboX = 28;
+    int startComboX = 26;
 
-    bandShapeComboBox.setBounds(startComboX, ctrlY + 16, 96, 26);
-    bandSlopeComboBox.setBounds(startComboX + 102, ctrlY + 16, 84, 26);
-    bandStereoComboBox.setBounds(startComboX + (bandSlopeComboBox.isVisible() ? 192 : 102), ctrlY + 16, 76, 26);
+    bandShapeComboBox.setBounds(startComboX, ctrlY + 16, 92, 26);
+    bandSlopeComboBox.setBounds(startComboX + 98, ctrlY + 16, 80, 26);
+    bandStereoComboBox.setBounds(startComboX + (bandSlopeComboBox.isVisible() ? 184 : 98), ctrlY + 16, 72, 26);
 
     // Compact Rotary Dials for Band Parameters (Freq, Gain, Q)
-    int sliderW = 56;
-    int sliderH = 50;
-    int startDialX = bandSlopeComboBox.isVisible() ? 300 : 212;
-    int dialSpacing = 72;
+    int sliderW = 52;
+    int sliderH = 48;
+    int startDialX = bandSlopeComboBox.isVisible() ? 266 : 180;
+    int dialSpacing = 62;
 
     bandFreqLabel.setBounds(startDialX, ctrlY + 2, sliderW, 12);
     bandFreqSlider.setBounds(startDialX, ctrlY + 14, sliderW, sliderH);
@@ -594,9 +640,9 @@ void SideDuckerAudioProcessorEditor::resized()
     bandQSlider.setBounds(qX, ctrlY + 14, sliderW, sliderH);
 
     // Global Resolution Dial (Right Zone)
-    int bandsDialX = 705;
-    spectralBandsLabel.setBounds(bandsDialX, ctrlY + 2, sliderW, 12);
-    spectralBandsSlider.setBounds(bandsDialX, ctrlY + 14, sliderW, sliderH);
+    int bandsDialX = 640;
+    spectralBandsLabel.setBounds(bandsDialX - 6, ctrlY + 2, 72, 12);
+    spectralBandsSlider.setBounds(bandsDialX, ctrlY + 14, 60, sliderH);
 
     // Master Card: y = 404, height = 190
     int masterCardY = 404;

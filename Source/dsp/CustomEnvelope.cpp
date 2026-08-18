@@ -248,11 +248,17 @@ float CustomEnvelope::evaluateAt(float phase) const
     return points.back().y;
 }
 
-float CustomEnvelope::getNextSample(juce::AudioPlayHead* playHead)
+void CustomEnvelope::processBlock(float* outL, float* outR, int numSamples, juce::AudioPlayHead* playHead)
 {
-    double beatsPerCycle = static_cast<double>(getBeatsForRate(currentRate));
+    if (numSamples <= 0)
+        return;
+
+    Rate rate = currentRate.load();
+    double beatsPerCycle = static_cast<double>(getBeatsForRate(rate));
     double bpm = 120.0;
     bool isHostPlaying = false;
+    double startPpq = 0.0;
+    bool hasPpq = false;
 
     if (playHead != nullptr)
     {
@@ -267,41 +273,64 @@ float CustomEnvelope::getNextSample(juce::AudioPlayHead* playHead)
                 isHostPlaying = true;
                 if (pos.getPpqPosition().hasValue())
                 {
-                    double ppq = *pos.getPpqPosition();
-                    double beatInCycle = std::fmod(ppq, beatsPerCycle);
-                    if (beatInCycle < 0.0)
-                        beatInCycle += beatsPerCycle;
-                    internalPhase = beatInCycle / beatsPerCycle;
+                    startPpq = *pos.getPpqPosition();
+                    hasPpq = true;
                 }
             }
         }
     }
 
-    if (!isHostPlaying)
+    double ppqPerSample = (bpm / 60.0) / sampleRate;
+    double samplesPerCycle = (60.0 / bpm) * beatsPerCycle * sampleRate;
+
+    for (int i = 0; i < numSamples; ++i)
     {
-        double secondsPerBeat = 60.0 / bpm;
-        double secondsPerCycle = secondsPerBeat * beatsPerCycle;
-        double samplesPerCycle = secondsPerCycle * sampleRate;
+        double phase = 0.0;
 
-        if (samplesPerCycle > 0.0)
+        if (isHostPlaying && hasPpq)
         {
-            internalPhase += 1.0 / samplesPerCycle;
-            if (internalPhase >= 1.0)
-                internalPhase -= std::floor(internalPhase);
+            double currentPpq = startPpq + static_cast<double>(i) * ppqPerSample;
+            double beatInCycle = std::fmod(currentPpq, beatsPerCycle);
+            if (beatInCycle < 0.0)
+                beatInCycle += beatsPerCycle;
+            phase = beatInCycle / beatsPerCycle;
+            internalPhase = phase;
         }
+        else
+        {
+            if (samplesPerCycle > 0.0)
+            {
+                internalPhase += 1.0 / samplesPerCycle;
+                if (internalPhase >= 1.0)
+                    internalPhase -= std::floor(internalPhase);
+            }
+            phase = internalPhase;
+        }
+
+        float normPhase = static_cast<float>(juce::jlimit(0.0, 1.0, phase));
+        float passGain = evaluateAt(normPhase);
+        float duckDepth = juce::jlimit(0.0f, 1.0f, 1.0f - passGain);
+
+        if (outL != nullptr) outL[i] = duckDepth;
+        if (outR != nullptr) outR[i] = duckDepth;
+
+        if (i == numSamples - 1)
+            currentPhase.store(normPhase);
     }
+}
 
-    float normPhase = static_cast<float>(juce::jlimit(0.0, 1.0, internalPhase));
-    currentPhase.store(normPhase);
-
-    return evaluateAt(normPhase);
+float CustomEnvelope::getNextSample(juce::AudioPlayHead* playHead)
+{
+    float val = 0.0f;
+    processBlock(&val, nullptr, 1, playHead);
+    return 1.0f - val;
 }
 
 juce::String CustomEnvelope::toXmlString() const
 {
     std::lock_guard<std::mutex> lock(pointMutex);
     juce::XmlElement xml("CUSTOM_ENVELOPE");
-    xml.setAttribute("rate", static_cast<int>(currentRate));
+    xml.setAttribute("rate", static_cast<int>(currentRate.load()));
 
     for (const auto& p : points)
     {
@@ -320,7 +349,7 @@ void CustomEnvelope::fromXmlString(const juce::String& xmlString)
     if (xml != nullptr && xml->hasTagName("CUSTOM_ENVELOPE"))
     {
         std::lock_guard<std::mutex> lock(pointMutex);
-        currentRate = static_cast<Rate>(xml->getIntAttribute("rate", 1));
+        currentRate.store(static_cast<Rate>(xml->getIntAttribute("rate", 1)));
 
         std::vector<Point> newPoints;
         for (auto* ptElem : xml->getChildIterator())

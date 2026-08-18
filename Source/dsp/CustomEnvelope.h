@@ -62,11 +62,13 @@ public:
     void loadPresetSmoothSwell();
 
     // DSP processing
+    void processBlock(float* outL, float* outR, int numSamples, juce::AudioPlayHead* playHead);
     float getNextSample(juce::AudioPlayHead* playHead);
     float evaluateAt(float phase) const;
 
     // Real-time playhead telemetry for UI (0.0 to 1.0)
     float getCurrentPhase() const noexcept { return currentPhase.load(); }
+    Rate getRate() const noexcept { return currentRate.load(); }
 
     // XML Serialization
     juce::String toXmlString() const;
@@ -76,7 +78,7 @@ public:
 
 private:
     double sampleRate = 44100.0;
-    Rate currentRate = Rate::Rate1_4;
+    std::atomic<Rate> currentRate { Rate::Rate1_4 };
 
     std::vector<Point> points;
     mutable std::mutex pointMutex;

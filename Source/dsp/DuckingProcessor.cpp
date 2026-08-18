@@ -322,14 +322,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     {
         float* scL = sidechainCopyBuffer.getWritePointer(0);
         float* scR = sidechainCopyBuffer.getWritePointer(1);
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float passGain = customEnvelope.getNextSample(playHead);
-            float duckDepth = juce::jlimit(0.0f, 1.0f, 1.0f - passGain);
-            scL[i] = duckDepth;
-            scR[i] = duckDepth;
-        }
+        customEnvelope.processBlock(scL, scR, numSamples, playHead);
     }
     else if (numSidechainChannels > 0)
     {
