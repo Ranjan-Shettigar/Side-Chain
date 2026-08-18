@@ -3,35 +3,22 @@
 SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioProcessor& p)
     : AudioProcessorEditor(&p),
       processorRef(p),
-      visualizer(p.getVisualizerFifo())
+      visualizer(p)
 {
     setLookAndFeel(&customLookAndFeel);
 
-    // Visualizer
+    // Visualizer Graph
     addAndMakeVisible(visualizer);
+    visualizer.onBandSelected = [this](int bandIdx) {
+        updateSelectedBandUI(bandIdx);
+    };
 
     // Hero Amount Knob
     amountSlider.setName("Amount");
     addAndMakeVisible(amountSlider);
     amountAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "amount", amountSlider);
 
-    // Small rotary knobs
-    setupRotaryControl(lowCutSlider, lowCutLabel, "LOW CUT", " Hz");
-    lowCutSlider.setName("Low Cut");
-    lowCutAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "lowCut", lowCutSlider);
-    lowCutSlider.onValueChange = [this]() {
-        visualizer.setFilterFrequencies(static_cast<float>(lowCutSlider.getValue()),
-                                        static_cast<float>(highCutSlider.getValue()));
-    };
-
-    setupRotaryControl(highCutSlider, highCutLabel, "HIGH CUT", " Hz");
-    highCutSlider.setName("High Cut");
-    highCutAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "highCut", highCutSlider);
-    highCutSlider.onValueChange = [this]() {
-        visualizer.setFilterFrequencies(static_cast<float>(lowCutSlider.getValue()),
-                                        static_cast<float>(highCutSlider.getValue()));
-    };
-
+    // Master Controls
     setupRotaryControl(attackSlider, attackLabel, "ATTACK", " ms");
     attackSlider.setName("Attack");
     attackAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "attack", attackSlider);
@@ -40,11 +27,11 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     releaseSlider.setName("Release");
     releaseAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "release", releaseSlider);
 
-    setupRotaryControl(outputGainSlider, outputGainLabel, "GAIN", " dB");
+    setupRotaryControl(outputGainSlider, outputGainLabel, "TRIM", " dB");
     outputGainSlider.setName("Output Gain");
     outputGainAttachment = std::make_unique<SliderAttachment>(processorRef.getAPVTS(), "outputGain", outputGainSlider);
 
-    // Toggle Buttons
+    // Master Toggles (M3 Pill Chips)
     scListenButton.setButtonText("SC LISTEN");
     scListenButton.setName("listen");
     addAndMakeVisible(scListenButton);
@@ -55,16 +42,42 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     addAndMakeVisible(bypassButton);
     bypassAttachment = std::make_unique<ButtonAttachment>(processorRef.getAPVTS(), "bypass", bypassButton);
 
-    // Set initial filter frequencies & sample rate on visualizer
-    visualizer.setSampleRate(processorRef.getSampleRate());
-    visualizer.setFilterFrequencies(static_cast<float>(lowCutSlider.getValue()),
-                                    static_cast<float>(highCutSlider.getValue()));
+    // Band Selector Pill Buttons (M3 Filter Chips 1 to 6)
+    for (int i = 0; i < 6; ++i)
+    {
+        auto& btn = bandSelectButtons[i];
+        btn.setButtonText(juce::String(i + 1));
+        btn.setClickingTogglesState(false);
+        btn.onClick = [this, i]() {
+            visualizer.setSelectedBandIndex(i);
+            updateSelectedBandUI(i);
+        };
+        addAndMakeVisible(btn);
+    }
 
-    // Window dimensions
-    setSize(680, 480);
+    // Band Control Strip Components
+    bandTitleLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    bandTitleLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::m3OnSurface);
+    addAndMakeVisible(bandTitleLabel);
+
+    addAndMakeVisible(bandTypeComboBox);
+
+    setupRotaryControl(bandFreqSlider, bandFreqLabel, "FREQ", " Hz");
+    setupRotaryControl(bandGainSlider, bandGainLabel, "SENSITIVITY", " dB");
+    setupRotaryControl(bandQSlider, bandQLabel, "Q / SLOPE", "");
+
+    bandBypassButton.setButtonText("BYPASS BAND");
+    bandBypassButton.setName("bandBypass");
+    addAndMakeVisible(bandBypassButton);
+
+    // Initial Band Selection (Band 2: Yellow GP1)
+    updateSelectedBandUI(1);
+
+    // Dimensions
+    setSize(740, 570);
     setResizable(false, false);
 
-    startTimerHz(60); // 60 FPS update for knob telemetry
+    startTimerHz(60);
 }
 
 SideDuckerAudioProcessorEditor::~SideDuckerAudioProcessorEditor()
@@ -82,8 +95,83 @@ void SideDuckerAudioProcessorEditor::setupRotaryControl(juce::Slider& slider, ju
 
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    label.setFont(juce::Font(10.0f, juce::Font::bold));
     addAndMakeVisible(label);
+}
+
+void SideDuckerAudioProcessorEditor::updateSelectedBandUI(int bandIndex)
+{
+    currentSelectedBand = juce::jlimit(0, 5, bandIndex);
+
+    // Update active pill button toggle states
+    for (int i = 0; i < 6; ++i)
+        bandSelectButtons[i].setToggleState(i == currentSelectedBand, juce::dontSendNotification);
+
+    // Release existing attachments
+    selectedTypeAttachment.reset();
+    selectedFreqAttachment.reset();
+    selectedGainAttachment.reset();
+    selectedQAttachment.reset();
+    selectedBypassAttachment.reset();
+
+    auto& apvts = processorRef.getAPVTS();
+    bandTypeComboBox.clear(juce::dontSendNotification);
+
+    if (currentSelectedBand == 0) // Band 1: Low Cut
+    {
+        bandTitleLabel.setText("BAND 1: LOW CUT", juce::dontSendNotification);
+        bandTitleLabel.setColour(juce::Label::textColourId, DuckingVisualizer::bandColours[0]);
+
+        bandTypeComboBox.addItemList({ "6 dB/oct", "12 dB/oct", "24 dB/oct", "48 dB/oct" }, 1);
+        selectedTypeAttachment = std::make_unique<ComboBoxAttachment>(apvts, "b1_slope", bandTypeComboBox);
+        selectedFreqAttachment = std::make_unique<SliderAttachment>(apvts, "b1_freq", bandFreqSlider);
+        selectedBypassAttachment = std::make_unique<ButtonAttachment>(apvts, "b1_bypass", bandBypassButton);
+
+        bandGainSlider.setVisible(false);
+        bandGainLabel.setVisible(false);
+        bandQSlider.setVisible(false);
+        bandQLabel.setVisible(false);
+    }
+    else if (currentSelectedBand == 5) // Band 6: High Cut
+    {
+        bandTitleLabel.setText("BAND 6: HIGH CUT", juce::dontSendNotification);
+        bandTitleLabel.setColour(juce::Label::textColourId, DuckingVisualizer::bandColours[5]);
+
+        bandTypeComboBox.addItemList({ "6 dB/oct", "12 dB/oct", "24 dB/oct", "48 dB/oct" }, 1);
+        selectedTypeAttachment = std::make_unique<ComboBoxAttachment>(apvts, "b6_slope", bandTypeComboBox);
+        selectedFreqAttachment = std::make_unique<SliderAttachment>(apvts, "b6_freq", bandFreqSlider);
+        selectedBypassAttachment = std::make_unique<ButtonAttachment>(apvts, "b6_bypass", bandBypassButton);
+
+        bandGainSlider.setVisible(false);
+        bandGainLabel.setVisible(false);
+        bandQSlider.setVisible(false);
+        bandQLabel.setVisible(false);
+    }
+    else // Bands 2-5: General Purpose
+    {
+        const std::array<juce::String, 4> colorNames = { "AMBER (GP 1)", "PEACH (GP 2)", "ROSE (GP 3)", "LAVENDER (GP 4)" };
+        int gpIdx = currentSelectedBand - 1;
+        int bNum = currentSelectedBand + 1;
+        juce::String prefix = "b" + juce::String(bNum) + "_";
+
+        bandTitleLabel.setText("BAND " + juce::String(bNum) + ": " + colorNames[gpIdx], juce::dontSendNotification);
+        bandTitleLabel.setColour(juce::Label::textColourId, DuckingVisualizer::bandColours[currentSelectedBand]);
+
+        bandTypeComboBox.addItemList({ "Bell", "Low Shelf", "High Shelf", "Band Shelf", "Notch", "Tilt" }, 1);
+        selectedTypeAttachment = std::make_unique<ComboBoxAttachment>(apvts, prefix + "type", bandTypeComboBox);
+        selectedFreqAttachment = std::make_unique<SliderAttachment>(apvts, prefix + "freq", bandFreqSlider);
+        selectedGainAttachment = std::make_unique<SliderAttachment>(apvts, prefix + "gain", bandGainSlider);
+        selectedQAttachment    = std::make_unique<SliderAttachment>(apvts, prefix + "q", bandQSlider);
+        selectedBypassAttachment = std::make_unique<ButtonAttachment>(apvts, prefix + "bypass", bandBypassButton);
+
+        bandGainSlider.setVisible(true);
+        bandGainLabel.setVisible(true);
+        bandQSlider.setVisible(true);
+        bandQLabel.setVisible(true);
+    }
+
+    resized();
+    repaint();
 }
 
 void SideDuckerAudioProcessorEditor::timerCallback()
@@ -94,104 +182,124 @@ void SideDuckerAudioProcessorEditor::timerCallback()
 
 void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // Background gradient
-    juce::ColourGradient bgGradient(CustomLookAndFeel::bgDark, 0.0f, 0.0f,
-                                    juce::Colour::fromRGB(9, 11, 15), 0.0f, static_cast<float>(getHeight()), false);
-    g.setGradientFill(bgGradient);
-    g.fillAll();
+    // M3 Base Surface
+    g.fillAll(CustomLookAndFeel::m3Surface);
 
-    // Header Background Bar
-    g.setColour(CustomLookAndFeel::bgCard.withAlpha(0.7f));
-    g.fillRect(0, 0, getWidth(), 48);
+    // M3 App Bar (Header)
+    g.setColour(CustomLookAndFeel::m3Surface);
+    g.fillRect(0, 0, getWidth(), 46);
 
-    g.setColour(CustomLookAndFeel::borderSubtle);
-    g.drawHorizontalLine(48, 0.0f, static_cast<float>(getWidth()));
+    // M3 Logo & Title
+    g.setColour(CustomLookAndFeel::m3Primary);
+    g.fillEllipse(18.0f, 15.0f, 16.0f, 16.0f);
+    g.setColour(CustomLookAndFeel::m3Surface);
+    g.fillEllipse(22.0f, 19.0f, 8.0f, 8.0f);
 
-    // Plugin Logo & Title
-    g.setColour(CustomLookAndFeel::accentCyan);
-    g.fillEllipse(18.0f, 16.0f, 16.0f, 16.0f);
-    g.setColour(CustomLookAndFeel::bgDark);
-    g.fillEllipse(22.0f, 20.0f, 8.0f, 8.0f);
+    g.setColour(CustomLookAndFeel::m3OnSurface);
+    g.setFont(juce::Font(15.0f, juce::Font::bold));
+    g.drawText("SideDucker", 42, 11, 120, 24, juce::Justification::centredLeft);
 
-    g.setColour(CustomLookAndFeel::textPrimary);
-    g.setFont(juce::Font(16.0f, juce::Font::bold));
-    g.drawText("SIDE DUCKER", 42, 12, 140, 24, juce::Justification::centredLeft);
-
-    g.setColour(CustomLookAndFeel::textSecondary);
+    g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.7f));
     g.setFont(juce::Font(10.0f, juce::Font::plain));
-    g.drawText("SPECTRAL DYNAMIC DUCKING", 165, 15, 200, 20, juce::Justification::centredLeft);
+    g.drawText("48-BAND DYNAMIC SPECTRAL DUCKER", 132, 13, 230, 20, juce::Justification::centredLeft);
 
-    // Panel separator cards
-    auto bottomArea = juce::Rectangle<int>(14, 260, getWidth() - 28, 175).toFloat();
-    g.setColour(CustomLookAndFeel::bgCard.withAlpha(0.6f));
-    g.fillRoundedRectangle(bottomArea, 10.0f);
-    g.setColour(CustomLookAndFeel::borderSubtle);
-    g.drawRoundedRectangle(bottomArea, 10.0f, 1.0f);
+    // 1. Band Control Strip Card (M3 Surface Container with 16px radius)
+    auto bandArea = juce::Rectangle<int>(14, 280, getWidth() - 28, 106).toFloat();
+    g.setColour(CustomLookAndFeel::m3SurfaceContainer);
+    g.fillRoundedRectangle(bandArea, 16.0f);
+    g.setColour(CustomLookAndFeel::m3OutlineVariant);
+    g.drawRoundedRectangle(bandArea, 16.0f, 1.0f);
 
-    // Section Labels in bottom card
-    g.setColour(CustomLookAndFeel::textSecondary.withAlpha(0.5f));
+    // 2. Bottom Master Card (M3 Surface Container with 16px radius)
+    auto bottomArea = juce::Rectangle<int>(14, 394, getWidth() - 28, 140).toFloat();
+    g.setColour(CustomLookAndFeel::m3SurfaceContainer);
+    g.fillRoundedRectangle(bottomArea, 16.0f);
+    g.setColour(CustomLookAndFeel::m3OutlineVariant);
+    g.drawRoundedRectangle(bottomArea, 16.0f, 1.0f);
+
+    // Section Labels in Master Card (M3 Title Medium style)
+    g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.7f));
     g.setFont(juce::Font(10.0f, juce::Font::bold));
-    g.drawText("TRIGGER FILTER", 30, 268, 140, 14, juce::Justification::centred);
-    g.drawText("DUCKING DEPTH", (getWidth() - 140) / 2, 268, 140, 14, juce::Justification::centred);
-    g.drawText("ENVELOPE & TRIM", getWidth() - 200, 268, 170, 14, juce::Justification::centred);
+    g.drawText("ENVELOPE", 30, 402, 140, 14, juce::Justification::centredLeft);
+    g.drawText("MASTER CARVE-OUT", getWidth() / 2 - 70, 402, 140, 14, juce::Justification::centred);
+    g.drawText("OUTPUT TRIM", getWidth() - 175, 402, 145, 14, juce::Justification::centred);
 
-    // Subtle vertical panel dividers
-    g.setColour(CustomLookAndFeel::borderSubtle.withAlpha(0.4f));
-    g.drawVerticalLine(190, 275.0f, 425.0f);
-    g.drawVerticalLine(getWidth() - 190, 275.0f, 425.0f);
+    // Dividers in Master Card
+    g.setColour(CustomLookAndFeel::m3OutlineVariant.withAlpha(0.4f));
+    g.drawVerticalLine(getWidth() / 2 - 80, 408.0f, 520.0f);
+    g.drawVerticalLine(getWidth() / 2 + 80, 408.0f, 520.0f);
 
-    // Footer Bar
-    g.setColour(CustomLookAndFeel::borderSubtle.withAlpha(0.5f));
-    g.drawHorizontalLine(getHeight() - 28, 0.0f, static_cast<float>(getWidth()));
-
-    g.setColour(CustomLookAndFeel::textSecondary.withAlpha(0.6f));
+    // Footer Bar (M3 Minimalist Caption)
+    g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.6f));
     g.setFont(juce::Font(10.0f, juce::Font::plain));
-    g.drawText("SIDECHAIN INPUT: 4-CHANNEL DUAL STEREO BUS", 18, getHeight() - 24, 300, 18, juce::Justification::centredLeft);
+    g.drawText("48-Band High Resolution Spectral Engine", 18, getHeight() - 22, 300, 16, juce::Justification::centredLeft);
 
     float scLevel = processorRef.getDuckingProcessor().getCurrentSidechainLevel();
     bool scActive = scLevel > 0.005f;
 
-    g.setColour(scActive ? CustomLookAndFeel::accentAmber : juce::Colour::fromRGB(70, 80, 90));
-    g.fillEllipse(static_cast<float>(getWidth() - 140), static_cast<float>(getHeight() - 18), 7.0f, 7.0f);
+    g.setColour(scActive ? CustomLookAndFeel::m3Secondary : CustomLookAndFeel::m3Outline);
+    g.fillEllipse(static_cast<float>(getWidth() - 120), static_cast<float>(getHeight() - 16), 6.0f, 6.0f);
 
-    g.setColour(scActive ? CustomLookAndFeel::textPrimary : CustomLookAndFeel::textSecondary);
-    g.drawText(scActive ? "SC ACTIVE" : "SC IDLE", getWidth() - 126, getHeight() - 24, 110, 18, juce::Justification::centredLeft);
+    g.setColour(scActive ? CustomLookAndFeel::m3OnSurface : CustomLookAndFeel::m3OnSurfaceVariant);
+    g.drawText(scActive ? "SC Active" : "SC Idle", getWidth() - 108, getHeight() - 22, 90, 16, juce::Justification::centredLeft);
 }
 
 void SideDuckerAudioProcessorEditor::resized()
 {
-    // Header Buttons
-    bypassButton.setBounds(getWidth() - 105, 10, 90, 28);
-    scListenButton.setBounds(getWidth() - 215, 10, 100, 28);
+    // Header Action Chips (Pill shaped)
+    bypassButton.setBounds(getWidth() - 96, 9, 82, 28);
+    scListenButton.setBounds(getWidth() - 198, 9, 94, 28);
 
-    // Visualizer Area
-    visualizer.setBounds(14, 56, getWidth() - 28, 192);
+    // Visualizer Graph Section (M3 16px rounded canvas)
+    visualizer.setBounds(14, 50, getWidth() - 28, 222);
 
-    // Hero Amount Knob (Center)
-    int knobSize = 135;
+    // Band Selector Pill Chips (1 to 6)
+    int pillStartX = 24;
+    int pillY = 290;
+    int pillW = 28;
+    int pillH = 24;
+    for (int i = 0; i < 6; ++i)
+    {
+        bandSelectButtons[i].setBounds(pillStartX + i * (pillW + 4), pillY, pillW, pillH);
+    }
+
+    // Band Title Label
+    bandTitleLabel.setBounds(pillStartX + 6 * (pillW + 4) + 12, pillY + 2, 220, 20);
+
+    // Band Bypass Toggle
+    bandBypassButton.setBounds(getWidth() - 135, pillY, 110, 24);
+
+    // Band Control Dials
+    int ctrlY = 320;
+    bandTypeComboBox.setBounds(24, ctrlY + 12, 110, 24);
+
+    int dialSize = 52;
+    int dialSpacing = 72;
+    int startDialX = 160;
+
+    bandFreqSlider.setBounds(startDialX, ctrlY, dialSize, dialSize + 18);
+    bandFreqLabel.setBounds(startDialX - 4, ctrlY + dialSize + 16, dialSize + 8, 14);
+
+    bandGainSlider.setBounds(startDialX + dialSpacing, ctrlY, dialSize, dialSize + 18);
+    bandGainLabel.setBounds(startDialX + dialSpacing - 10, ctrlY + dialSize + 16, dialSize + 20, 14);
+
+    bandQSlider.setBounds(startDialX + dialSpacing * 2, ctrlY, dialSize, dialSize + 18);
+    bandQLabel.setBounds(startDialX + dialSpacing * 2 - 8, ctrlY + dialSize + 16, dialSize + 16, 14);
+
+    // Master Hero Amount Knob (Center)
+    int knobSize = 118;
     int centerX = getWidth() / 2;
-    amountSlider.setBounds(centerX - knobSize / 2, 288, knobSize, knobSize);
+    amountSlider.setBounds(centerX - knobSize / 2, 408, knobSize, knobSize);
 
-    // Left Panel: Sidechain Filters (Low Cut & High Cut)
-    int leftSliderSize = 65;
-    int leftY = 300;
-    lowCutSlider.setBounds(28, leftY, leftSliderSize, leftSliderSize + 22);
-    lowCutLabel.setBounds(28, leftY + leftSliderSize + 18, leftSliderSize, 16);
+    // Master Envelope (Left)
+    int envSize = 54;
+    attackSlider.setBounds(36, 424, envSize, envSize + 20);
+    attackLabel.setBounds(36, 424 + envSize + 18, envSize, 14);
 
-    highCutSlider.setBounds(108, leftY, leftSliderSize, leftSliderSize + 22);
-    highCutLabel.setBounds(108, leftY + leftSliderSize + 18, leftSliderSize, 16);
+    releaseSlider.setBounds(116, 424, envSize, envSize + 20);
+    releaseLabel.setBounds(116, 424 + envSize + 18, envSize, 14);
 
-    // Right Panel: Attack, Release, Gain
-    int rightSliderSize = 58;
-    int rightY = 300;
-    int rightStartX = getWidth() - 182;
-
-    attackSlider.setBounds(rightStartX, rightY, rightSliderSize, rightSliderSize + 20);
-    attackLabel.setBounds(rightStartX, rightY + rightSliderSize + 18, rightSliderSize, 16);
-
-    releaseSlider.setBounds(rightStartX + 58, rightY, rightSliderSize, rightSliderSize + 20);
-    releaseLabel.setBounds(rightStartX + 58, rightY + rightSliderSize + 18, rightSliderSize, 16);
-
-    outputGainSlider.setBounds(rightStartX + 116, rightY, rightSliderSize, rightSliderSize + 20);
-    outputGainLabel.setBounds(rightStartX + 116, rightY + rightSliderSize + 18, rightSliderSize, 16);
+    // Master Output Gain (Right)
+    outputGainSlider.setBounds(getWidth() - 130, 424, envSize, envSize + 20);
+    outputGainLabel.setBounds(getWidth() - 130, 424 + envSize + 18, envSize, 14);
 }

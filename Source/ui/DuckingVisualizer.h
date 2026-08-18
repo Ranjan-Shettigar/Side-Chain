@@ -2,30 +2,38 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "../dsp/AudioVisualizerFifo.h"
+#include "../dsp/DuckingProcessor.h"
+
+class SideDuckerAudioProcessor;
 
 /**
- * Real-time Frequency Spectrum Analyzer displaying:
- * 1. Main Input audio spectrum (20Hz - 20kHz)
- * 2. Ducked Output audio spectrum
- * 3. Sidechain trigger frequency spectrum
- * 4. Real-time dynamic ducking carve-out zone (gain reduction)
- * 5. Low-Cut & High-Cut sidechain filter curtains
+ * Soothe 2-Style Interactive Frequency Sensitivity & Real-Time Reduction Graph
  */
 class DuckingVisualizer : public juce::Component, public juce::Timer
 {
 public:
-    explicit DuckingVisualizer(AudioVisualizerFifo& fifo);
+    explicit DuckingVisualizer(SideDuckerAudioProcessor& processor);
     ~DuckingVisualizer() override;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
 
-    void setFilterFrequencies(float lowCutHz, float highCutHz);
-    void setSampleRate(double newSampleRate) { sampleRate = newSampleRate > 0 ? newSampleRate : 44100.0; }
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
+    void mouseDoubleClick(const juce::MouseEvent& e) override;
+
+    int getSelectedBandIndex() const noexcept { return selectedBandIndex; }
+    void setSelectedBandIndex(int index);
+
+    std::function<void(int)> onBandSelected;
+    std::function<void(int, float, float, float)> onNodeParamChanged; // band, freq, gain, q
+
+    static const std::array<juce::Colour, 6> bandColours;
 
 private:
-    AudioVisualizerFifo& audioFifo;
+    SideDuckerAudioProcessor& processorRef;
 
     static constexpr int fftOrder = 11;
     static constexpr int fftSize = 1 << fftOrder; // 2048
@@ -34,37 +42,38 @@ private:
     juce::dsp::FFT forwardFFT;
     juce::dsp::WindowingFunction<float> window;
 
-    // Time-domain accumulation buffers
     std::array<float, fftSize> fifoBufferIn {};
     std::array<float, fftSize> fifoBufferOut {};
     std::array<float, fftSize> fifoBufferSC {};
     int fifoIndex = 0;
 
-    // FFT frequency-domain buffers (size = 2 * fftSize for complex output)
     std::array<float, 2 * fftSize> fftDataIn {};
     std::array<float, 2 * fftSize> fftDataOut {};
     std::array<float, 2 * fftSize> fftDataSC {};
 
-    // Smoothed spectrum magnitudes across log frequency points
     std::vector<float> spectrumIn;
     std::vector<float> spectrumOut;
     std::vector<float> spectrumSC;
-
-    // Log-spaced frequency mapping lookup
     std::vector<float> binFrequencies;
 
-    double sampleRate = 44100.0;
-    float lowCutFreq = 20.0f;
-    float highCutFreq = 20000.0f;
+    // Smoothed 48-band reduction for the downward graph
+    std::array<float, DuckingProcessor::NumBands> smoothedReduction;
 
-    // Temporary read buffer for polling FIFO
+    int selectedBandIndex = 1; // Band 2 (GP1) by default
+    int draggingBandIndex = -1;
+
     std::vector<AudioVisualizerFifo::VisualizerSample> readBuffer;
 
     void processNextFftBlock();
     void computeSpectrumPoints();
     float getMagnitudeForFrequency(const std::array<float, 2 * fftSize>& fftData, float frequency) const;
     float mapFrequencyToX(float freq, float startX, float width) const;
+    float mapXToFrequency(float x, float startX, float width) const;
     float mapDbToY(float db, float topY, float height) const;
+    float mapYToDb(float y, float topY, float height) const;
+
+    int getBandNodeAtPosition(juce::Point<float> pos) const;
+    juce::Point<float> getNodePosition(int bandIdx, float startX, float startY, float width, float height) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DuckingVisualizer)
 };

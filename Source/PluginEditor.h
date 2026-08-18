@@ -23,39 +23,58 @@ private:
     // Visualizer
     DuckingVisualizer visualizer;
 
-    // Controls
+    // Master Controls
     GlowingKnob amountSlider;
     juce::Slider attackSlider;
     juce::Slider releaseSlider;
-    juce::Slider lowCutSlider;
-    juce::Slider highCutSlider;
     juce::Slider outputGainSlider;
 
     juce::ToggleButton scListenButton;
     juce::ToggleButton bypassButton;
 
-    // Labels
     juce::Label attackLabel;
     juce::Label releaseLabel;
-    juce::Label lowCutLabel;
-    juce::Label highCutLabel;
     juce::Label outputGainLabel;
+
+    // Band Selector Pills (1 to 6)
+    std::array<juce::TextButton, 6> bandSelectButtons;
+
+    // Dedicated Controls for currently selected band
+    juce::Label bandTitleLabel;
+    juce::ComboBox bandTypeComboBox;
+    juce::Slider bandFreqSlider;
+    juce::Slider bandGainSlider;
+    juce::Slider bandQSlider;
+    juce::ToggleButton bandBypassButton;
+
+    juce::Label bandTypeLabel;
+    juce::Label bandFreqLabel;
+    juce::Label bandGainLabel;
+    juce::Label bandQLabel;
+
+    int currentSelectedBand = 1; // 0 = Band 1 (Low Cut), 1..4 = GP1..GP4, 5 = Band 6 (High Cut)
 
     // APVTS Attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     std::unique_ptr<SliderAttachment> amountAttachment;
     std::unique_ptr<SliderAttachment> attackAttachment;
     std::unique_ptr<SliderAttachment> releaseAttachment;
-    std::unique_ptr<SliderAttachment> lowCutAttachment;
-    std::unique_ptr<SliderAttachment> highCutAttachment;
     std::unique_ptr<SliderAttachment> outputGainAttachment;
-
     std::unique_ptr<ButtonAttachment> scListenAttachment;
     std::unique_ptr<ButtonAttachment> bypassAttachment;
 
+    // Dynamic attachments for selected band
+    std::unique_ptr<ComboBoxAttachment> selectedTypeAttachment;
+    std::unique_ptr<SliderAttachment> selectedFreqAttachment;
+    std::unique_ptr<SliderAttachment> selectedGainAttachment;
+    std::unique_ptr<SliderAttachment> selectedQAttachment;
+    std::unique_ptr<ButtonAttachment> selectedBypassAttachment;
+
     void setupRotaryControl(juce::Slider& slider, juce::Label& label, const juce::String& text, const juce::String& suffix);
+    void updateSelectedBandUI(int bandIndex);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SideDuckerAudioProcessorEditor)
 };

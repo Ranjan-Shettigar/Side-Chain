@@ -46,15 +46,32 @@ private:
     DuckingProcessor duckingProcessor;
     AudioVisualizerFifo visualizerFifo;
 
-    // Cached raw parameter pointers for audio thread performance
+    // Master parameter atomic pointers
     std::atomic<float>* amountParam = nullptr;
     std::atomic<float>* attackParam = nullptr;
     std::atomic<float>* releaseParam = nullptr;
-    std::atomic<float>* lowCutParam = nullptr;
-    std::atomic<float>* highCutParam = nullptr;
     std::atomic<float>* outputGainParam = nullptr;
     std::atomic<float>* scListenParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
+
+    // Band 1-6 parameter pointers
+    std::atomic<float>* b1_freqParam = nullptr;
+    std::atomic<float>* b1_slopeParam = nullptr;
+    std::atomic<float>* b1_bypassParam = nullptr;
+
+    struct GPBandParams
+    {
+        std::atomic<float>* typeParam = nullptr;
+        std::atomic<float>* freqParam = nullptr;
+        std::atomic<float>* gainParam = nullptr;
+        std::atomic<float>* qParam = nullptr;
+        std::atomic<float>* bypassParam = nullptr;
+    };
+    std::array<GPBandParams, 4> gpBandParams;
+
+    std::atomic<float>* b6_freqParam = nullptr;
+    std::atomic<float>* b6_slopeParam = nullptr;
+    std::atomic<float>* b6_bypassParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SideDuckerAudioProcessor)
 };

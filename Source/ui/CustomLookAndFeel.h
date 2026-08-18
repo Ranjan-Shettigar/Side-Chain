@@ -1,6 +1,9 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
+/**
+ * Custom LookAndFeel inspired by Google Material Design 3 (Material You) Dark Theme
+ */
 class CustomLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -19,18 +22,39 @@ public:
                           bool shouldDrawButtonAsHighlighted,
                           bool shouldDrawButtonAsDown) override;
 
-    void drawLabel(juce::Graphics& g, juce::Label& label) override;
+    void drawButtonBackground(juce::Graphics& g,
+                              juce::Button& button,
+                              const juce::Colour& backgroundColour,
+                              bool shouldDrawButtonAsHighlighted,
+                              bool shouldDrawButtonAsDown) override;
 
+    void drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
+                      int buttonX, int buttonY, int buttonW, int buttonH,
+                      juce::ComboBox& box) override;
+
+    void drawPopupMenuBackground(juce::Graphics& g, int width, int height) override;
+    void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
+                           bool isSeparator, bool isActive, bool isHighlighted, bool isTicked,
+                           bool hasSubMenu, const juce::String& text,
+                           const juce::String& shortcutKeyText,
+                           const juce::Drawable* icon, const juce::Colour* textColour) override;
+
+    void drawLabel(juce::Graphics& g, juce::Label& label) override;
     juce::Font getLabelFont(juce::Label& label) override;
 
-    // Palette
-    static const juce::Colour bgDark;
-    static const juce::Colour bgCard;
-    static const juce::Colour bgCardInner;
-    static const juce::Colour borderSubtle;
-    static const juce::Colour accentCyan;
-    static const juce::Colour accentMagenta;
-    static const juce::Colour accentAmber;
-    static const juce::Colour textPrimary;
-    static const juce::Colour textSecondary;
+    // Material Design 3 Dark Theme Palette Tokens
+    static const juce::Colour m3Surface;
+    static const juce::Colour m3SurfaceContainerLowest;
+    static const juce::Colour m3SurfaceContainerLow;
+    static const juce::Colour m3SurfaceContainer;
+    static const juce::Colour m3SurfaceContainerHigh;
+    static const juce::Colour m3SurfaceContainerHighest;
+    static const juce::Colour m3Primary;
+    static const juce::Colour m3PrimaryContainer;
+    static const juce::Colour m3Secondary;
+    static const juce::Colour m3Tertiary;
+    static const juce::Colour m3Outline;
+    static const juce::Colour m3OutlineVariant;
+    static const juce::Colour m3OnSurface;
+    static const juce::Colour m3OnSurfaceVariant;
 };
