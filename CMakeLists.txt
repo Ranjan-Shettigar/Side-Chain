@@ -39,11 +39,15 @@ target_sources(SideDucker
         Source/PluginEditor.h
         Source/dsp/DuckingProcessor.h
         Source/dsp/DuckingProcessor.cpp
+        Source/dsp/CustomEnvelope.h
+        Source/dsp/CustomEnvelope.cpp
         Source/dsp/AudioVisualizerFifo.h
         Source/ui/CustomLookAndFeel.h
         Source/ui/CustomLookAndFeel.cpp
         Source/ui/DuckingVisualizer.h
         Source/ui/DuckingVisualizer.cpp
+        Source/ui/EnvelopeEditor.h
+        Source/ui/EnvelopeEditor.cpp
         Source/ui/GlowingKnob.h
         Source/ui/GlowingKnob.cpp
 )

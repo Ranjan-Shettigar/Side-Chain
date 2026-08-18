@@ -5,6 +5,7 @@
 #include "ui/CustomLookAndFeel.h"
 #include "ui/GlowingKnob.h"
 #include "ui/DuckingVisualizer.h"
+#include "ui/EnvelopeEditor.h"
 
 class SideDuckerAudioProcessorEditor : public juce::AudioProcessorEditor, public juce::Timer
 {
@@ -20,8 +21,13 @@ private:
     SideDuckerAudioProcessor& processorRef;
     CustomLookAndFeel customLookAndFeel;
 
-    // Visualizer
+    // View Switcher (Spectrum Visualizer vs Custom Envelope)
+    juce::TextButton viewSpectrumButton;
+    juce::TextButton viewEnvelopeButton;
+
+    // Visualizers
     DuckingVisualizer visualizer;
+    EnvelopeEditor envelopeEditor;
 
     // Master Controls
     GlowingKnob amountSlider;
@@ -100,6 +106,7 @@ private:
     void setupRotaryControl(juce::Slider& slider, juce::Label& label, const juce::String& text, const juce::String& suffix);
     void updateSelectedBandUI(int bandIndex);
     void updateStereoSectionUI();
+    void setViewMode(int modeIndex); // 0 = Spectrum, 1 = Custom Envelope
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SideDuckerAudioProcessorEditor)
 };

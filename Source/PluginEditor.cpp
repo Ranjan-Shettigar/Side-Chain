@@ -3,15 +3,29 @@
 SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioProcessor& p)
     : AudioProcessorEditor(&p),
       processorRef(p),
-      visualizer(p)
+      visualizer(p),
+      envelopeEditor(p)
 {
     setLookAndFeel(&customLookAndFeel);
 
-    // Visualizer Graph
+    // View Switcher Chips (SPECTRUM vs CUSTOM ENVELOPE)
+    viewSpectrumButton.setButtonText("SPECTRUM & EQ");
+    viewSpectrumButton.setClickingTogglesState(false);
+    viewSpectrumButton.onClick = [this]() { setViewMode(0); };
+    addAndMakeVisible(viewSpectrumButton);
+
+    viewEnvelopeButton.setButtonText("CUSTOM ENVELOPE");
+    viewEnvelopeButton.setClickingTogglesState(false);
+    viewEnvelopeButton.onClick = [this]() { setViewMode(1); };
+    addAndMakeVisible(viewEnvelopeButton);
+
+    // Visualizer Graph & Envelope Editor
     addAndMakeVisible(visualizer);
     visualizer.onBandSelected = [this](int bandIdx) {
         updateSelectedBandUI(bandIdx);
     };
+
+    addChildComponent(envelopeEditor); // Initially hidden, shown when mode = 1
 
     // Hero Amount Knob
     amountSlider.setName("Amount");
@@ -136,6 +150,12 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     updateSelectedBandUI(0);
     updateStereoSectionUI();
 
+    // Check initial SC source mode from parameter
+    int initialMode = 0;
+    if (auto* p = processorRef.getAPVTS().getRawParameterValue("sc_source"))
+        initialMode = static_cast<int>(p->load());
+    setViewMode(initialMode);
+
     // Dimensions: 880 x 640
     setSize(880, 640);
     setResizable(false, false);
@@ -147,6 +167,24 @@ SideDuckerAudioProcessorEditor::~SideDuckerAudioProcessorEditor()
 {
     stopTimer();
     setLookAndFeel(nullptr);
+}
+
+void SideDuckerAudioProcessorEditor::setViewMode(int modeIndex)
+{
+    bool isEnvelope = (modeIndex == 1);
+
+    viewSpectrumButton.setToggleState(!isEnvelope, juce::dontSendNotification);
+    viewEnvelopeButton.setToggleState(isEnvelope, juce::dontSendNotification);
+
+    visualizer.setVisible(!isEnvelope);
+    envelopeEditor.setVisible(isEnvelope);
+
+    if (auto* param = dynamic_cast<juce::AudioParameterChoice*>(processorRef.getAPVTS().getParameter("sc_source")))
+    {
+        *param = modeIndex;
+    }
+
+    repaint();
 }
 
 void SideDuckerAudioProcessorEditor::setupRotaryControl(juce::Slider& slider, juce::Label& label, const juce::String& text, const juce::String& suffix)
@@ -305,11 +343,7 @@ void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(CustomLookAndFeel::m3OnSurface);
     g.setFont(juce::Font(15.0f, juce::Font::bold));
-    g.drawText("SideDucker Pro", 42, 11, 140, 24, juce::Justification::centredLeft);
-
-    g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.65f));
-    g.setFont(juce::Font(10.0f, juce::Font::plain));
-    g.drawText("48-BAND DYNAMIC SPECTRAL DUCKER", 152, 13, 240, 20, juce::Justification::centredLeft);
+    g.drawText("SideDucker Pro", 42, 11, 130, 24, juce::Justification::centredLeft);
 
     // 1. Compact Band Control Strip Card (106px height)
     auto bandArea = juce::Rectangle<int>(16, 290, getWidth() - 32, 106).toFloat();
@@ -350,26 +384,33 @@ void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
     // Footer Bar
     g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.5f));
     g.setFont(juce::Font(10.0f, juce::Font::plain));
-    g.drawText("48-Band High Resolution Spectral Engine | Pro-Q 4 Mode", 18, getHeight() - 24, 340, 18, juce::Justification::centredLeft);
+    g.drawText("48-Band High Resolution Spectral Engine | Dual Trigger Sidechain", 18, getHeight() - 24, 380, 18, juce::Justification::centredLeft);
 
+    bool isEnvelope = (processorRef.getDuckingProcessor().getSidechainSource() == DuckingProcessor::SidechainSource::InternalEnvelope);
     float scLevel = processorRef.getDuckingProcessor().getCurrentSidechainLevel();
-    bool scActive = scLevel > 0.005f;
+    bool scActive = isEnvelope || (scLevel > 0.005f);
 
     g.setColour(scActive ? CustomLookAndFeel::m3Secondary : CustomLookAndFeel::m3Outline);
-    g.fillEllipse(static_cast<float>(getWidth() - 120), static_cast<float>(getHeight() - 17), 6.0f, 6.0f);
+    g.fillEllipse(static_cast<float>(getWidth() - 140), static_cast<float>(getHeight() - 17), 6.0f, 6.0f);
 
     g.setColour(scActive ? CustomLookAndFeel::m3OnSurface : CustomLookAndFeel::m3OnSurfaceVariant);
-    g.drawText(scActive ? "SC Active" : "SC Idle", getWidth() - 108, getHeight() - 24, 90, 18, juce::Justification::centredLeft);
+    g.drawText(isEnvelope ? "LFO Active" : (scActive ? "SC Active" : "SC Idle"), getWidth() - 128, getHeight() - 24, 110, 18, juce::Justification::centredLeft);
 }
 
 void SideDuckerAudioProcessorEditor::resized()
 {
-    // Header Action Chips
-    bypassButton.setBounds(getWidth() - 106, 9, 90, 28);
-    scListenButton.setBounds(getWidth() - 212, 9, 98, 28);
+    // Header Action & Switcher Chips
+    int headerBtnY = 9;
+    viewSpectrumButton.setBounds(180, headerBtnY, 125, 28);
+    viewEnvelopeButton.setBounds(312, headerBtnY, 135, 28);
 
-    // Visualizer Graph Section (Expanded height: 236px)
-    visualizer.setBounds(16, 48, getWidth() - 32, 236);
+    bypassButton.setBounds(getWidth() - 106, headerBtnY, 90, 28);
+    scListenButton.setBounds(getWidth() - 212, headerBtnY, 98, 28);
+
+    // Visualizer Graph Section & Envelope Editor (Expanded height: 236px)
+    auto visualizerBounds = juce::Rectangle<int>(16, 48, getWidth() - 32, 236);
+    visualizer.setBounds(visualizerBounds);
+    envelopeEditor.setBounds(visualizerBounds);
 
     // Compact Band Control Strip Card: y = 290, height = 106
     int bandCardY = 290;

@@ -36,6 +36,7 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
     smoothedAmount.reset(sampleRate, 0.02);
     smoothedOutputGain.reset(sampleRate, 0.02);
+    customEnvelope.setSampleRate(sampleRate);
 
     for (int i = 0; i < NumBands; ++i)
     {
@@ -77,6 +78,7 @@ void DuckingProcessor::reset()
 
     currentGainReduction.store(1.0f);
     currentSidechainLevel.store(0.0f);
+    customEnvelope.reset();
     updateCoefficients();
 }
 
@@ -102,8 +104,8 @@ void DuckingProcessor::encodeToMidSide(juce::AudioBuffer<float>& buffer)
     {
         float l = chL[i];
         float r = chR[i];
-        chL[i] = 0.5f * (l + r); // Mid
-        chR[i] = 0.5f * (l - r); // Side
+        chL[i] = 0.5f * (l + r);
+        chR[i] = 0.5f * (l - r);
     }
 }
 
@@ -120,8 +122,8 @@ void DuckingProcessor::decodeFromMidSide(juce::AudioBuffer<float>& buffer)
     {
         float m = chM[i];
         float s = chS[i];
-        chM[i] = m + s; // Left
-        chS[i] = m - s; // Right
+        chM[i] = m + s;
+        chS[i] = m - s;
     }
 }
 
@@ -246,6 +248,7 @@ void DuckingProcessor::setParameters(float amountPercent,
                                      float outputGainDb,
                                      bool sidechainListen,
                                      bool bypass,
+                                     SidechainSource scSource,
                                      const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
                                      const StereoConfig& stereoConfig)
 {
@@ -261,13 +264,15 @@ void DuckingProcessor::setParameters(float amountPercent,
 
     listenSidechain = sidechainListen;
     isBypassed = bypass;
+    currentScSource = scSource;
     currentBands = bandConfigs;
     currentStereo = stereoConfig;
 }
 
 void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
                               const juce::AudioBuffer<float>& sidechainBuffer,
-                              AudioVisualizerFifo& visualizerFifo)
+                              AudioVisualizerFifo& visualizerFifo,
+                              juce::AudioPlayHead* playHead)
 {
     const int numSamples = mainBuffer.getNumSamples();
     const int numMainChannels = mainBuffer.getNumChannels();
@@ -308,7 +313,20 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (sidechainCopyBuffer.getNumSamples() < numSamples)
         sidechainCopyBuffer.setSize(2, numSamples, false, false, true);
 
-    if (numSidechainChannels > 0)
+    // Prepare sidechain signal based on Source Mode (External Audio vs Custom Envelope)
+    if (currentScSource == SidechainSource::InternalEnvelope)
+    {
+        float* scL = sidechainCopyBuffer.getWritePointer(0);
+        float* scR = sidechainCopyBuffer.getWritePointer(1);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float envVal = customEnvelope.getNextSample(playHead);
+            scL[i] = envVal;
+            scR[i] = envVal;
+        }
+    }
+    else if (numSidechainChannels > 0)
     {
         sidechainCopyBuffer.copyFrom(0, 0, sidechainBuffer, 0, 0, numSamples);
         if (numSidechainChannels > 1)
@@ -349,7 +367,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     juce::AudioBuffer<float> originalInputCopy;
     originalInputCopy.makeCopyOf(mainBuffer);
 
-    // Stereo Mode: encode to Mid/Side if needed (before processing)
+    // Stereo Mode: encode to Mid/Side if needed
     bool useMidSide = (currentStereo.mode == StereoMode::MidSide) && (numMainChannels >= 2);
     if (useMidSide)
     {
@@ -361,10 +379,8 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     float maxSidechainInBlock = 0.0f;
     float maxGainReductionInBlock = 0.0f;
 
-    // Stereo Link & Balance
     float linkFactor = juce::jlimit(0.0f, 1.0f, currentStereo.linkPercent / 100.0f);
     float balanceNorm = juce::jlimit(0.0f, 1.0f, currentStereo.balancePercent / 100.0f);
-    // balanceNorm: 0.0 = full ch0, 0.5 = even, 1.0 = full ch1
     float processingWeightL = juce::jlimit(0.0f, 1.0f, 2.0f * (1.0f - balanceNorm));
     float processingWeightR = juce::jlimit(0.0f, 1.0f, 2.0f * balanceNorm);
 
@@ -383,41 +399,58 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         float sensWeightL = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbL));
         float sensWeightR = juce::jlimit(0.0f, 6.0f, juce::Decibels::decibelsToGain(sensDbR));
 
-        // Extract band energy from sidechain
         float bandMaxEnergy = 0.0f;
-        for (int i = 0; i < numSamples; ++i)
+
+        if (currentScSource == SidechainSource::InternalEnvelope)
         {
-            float fScL = band.scFilterL.processSample(scL[i]);
-            float fScR = band.scFilterR.processSample(scR[i]);
+            // For custom envelope, evaluate envelope magnitude directly
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float scMagL = std::abs(scL[i]);
+                float scMagR = std::abs(scR[i]);
+                float scMagMax = juce::jmax(scMagL, scMagR);
 
-            float scMagL = std::abs(fScL);
-            float scMagR = std::abs(fScR);
+                band.envelopeStateL = scMagL;
+                band.envelopeStateR = scMagR;
 
-            // Apply stereo link: blend individual and summed magnitudes
-            float scSum = 0.5f * (scMagL + scMagR);
-            float linkedMagL = scMagL + linkFactor * (scSum - scMagL);
-            float linkedMagR = scMagR + linkFactor * (scSum - scMagR);
+                if (scMagMax > bandMaxEnergy)
+                    bandMaxEnergy = scMagMax;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float fScL = band.scFilterL.processSample(scL[i]);
+                float fScR = band.scFilterR.processSample(scR[i]);
 
-            float scMagMax = juce::jmax(linkedMagL, linkedMagR);
+                float scMagL = std::abs(fScL);
+                float scMagR = std::abs(fScR);
 
-            if (linkedMagL > band.envelopeStateL)
-                band.envelopeStateL = attackCoeff * band.envelopeStateL + (1.0f - attackCoeff) * linkedMagL;
-            else
-                band.envelopeStateL = releaseCoeff * band.envelopeStateL + (1.0f - releaseCoeff) * linkedMagL;
+                float scSum = 0.5f * (scMagL + scMagR);
+                float linkedMagL = scMagL + linkFactor * (scSum - scMagL);
+                float linkedMagR = scMagR + linkFactor * (scSum - scMagR);
 
-            if (linkedMagR > band.envelopeStateR)
-                band.envelopeStateR = attackCoeff * band.envelopeStateR + (1.0f - attackCoeff) * linkedMagR;
-            else
-                band.envelopeStateR = releaseCoeff * band.envelopeStateR + (1.0f - releaseCoeff) * linkedMagR;
+                float scMagMax = juce::jmax(linkedMagL, linkedMagR);
 
-            if (scMagMax > bandMaxEnergy)
-                bandMaxEnergy = scMagMax;
+                if (linkedMagL > band.envelopeStateL)
+                    band.envelopeStateL = attackCoeff * band.envelopeStateL + (1.0f - attackCoeff) * linkedMagL;
+                else
+                    band.envelopeStateL = releaseCoeff * band.envelopeStateL + (1.0f - releaseCoeff) * linkedMagL;
+
+                if (linkedMagR > band.envelopeStateR)
+                    band.envelopeStateR = attackCoeff * band.envelopeStateR + (1.0f - attackCoeff) * linkedMagR;
+                else
+                    band.envelopeStateR = releaseCoeff * band.envelopeStateR + (1.0f - releaseCoeff) * linkedMagR;
+
+                if (scMagMax > bandMaxEnergy)
+                    bandMaxEnergy = scMagMax;
+            }
         }
 
         if (bandMaxEnergy > maxSidechainInBlock)
             maxSidechainInBlock = bandMaxEnergy;
 
-        // Calculate dynamic ducking cut per channel
         float envNormL = juce::jlimit(0.0f, 2.0f, band.envelopeStateL * 2.8f);
         float envNormR = juce::jlimit(0.0f, 2.0f, band.envelopeStateR * 2.8f);
 
@@ -433,7 +466,6 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         if (std::abs(avgCutDb) > maxGainReductionInBlock)
             maxGainReductionInBlock = std::abs(avgCutDb);
 
-        // Update dynamic peaking EQ on main audio
         float gainLinearL = juce::Decibels::decibelsToGain(band.currentGainDbL);
         float gainLinearR = juce::Decibels::decibelsToGain(band.currentGainDbR);
 
@@ -453,11 +485,9 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
         }
     }
 
-    // Stereo Mode: decode back from Mid/Side (after processing)
     if (useMidSide)
         decodeFromMidSide(mainBuffer);
 
-    // Apply Output Gain & push audio to visualizer FIFO
     float* finalL = numMainChannels > 0 ? mainBuffer.getWritePointer(0) : nullptr;
     float* finalR = numMainChannels > 1 ? mainBuffer.getWritePointer(1) : nullptr;
 

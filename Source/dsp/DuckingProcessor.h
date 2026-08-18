@@ -2,22 +2,23 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "AudioVisualizerFifo.h"
+#include "CustomEnvelope.h"
 
 /**
  * 48-Band Dynamic Spectral Ducking Processor with FabFilter Pro-Q 4 Inspired Parametric Sensitivity EQ
- * 
- * Features:
- * - 48 independent logarithmic frequency bands (20 Hz - 20 kHz)
- * - 6 fully flexible parametric bands with 9 filter shapes
- * - 10 Slopes, Stereo Placement per band, Per-band Solo
- * - Master Stereo Section: Mode (L/R vs M/S), Link (0-100%), Balance
- * - Real-time per-band reduction telemetry for the downward reduction graph
+ * and Internal Custom Envelope / LFO Engine
  */
 class DuckingProcessor
 {
 public:
     static constexpr int NumBands = 48;
     static constexpr int NumParametricBands = 6;
+
+    enum class SidechainSource
+    {
+        ExternalAudio = 0,
+        InternalEnvelope
+    };
 
     enum class FilterShape
     {
@@ -92,12 +93,14 @@ public:
                        float outputGainDb,
                        bool sidechainListen,
                        bool bypass,
+                       SidechainSource scSource,
                        const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
                        const StereoConfig& stereoConfig);
 
     void process(juce::AudioBuffer<float>& mainBuffer,
                  const juce::AudioBuffer<float>& sidechainBuffer,
-                 AudioVisualizerFifo& visualizerFifo);
+                 AudioVisualizerFifo& visualizerFifo,
+                 juce::AudioPlayHead* playHead = nullptr);
 
     float getCurrentGainReduction() const noexcept { return currentGainReduction.load(); }
     float getCurrentSidechainLevel() const noexcept { return currentSidechainLevel.load(); }
@@ -120,6 +123,9 @@ public:
     const std::array<ParametricBandConfig, NumParametricBands>& getBandConfigs() const noexcept { return currentBands; }
     const StereoConfig& getStereoConfig() const noexcept { return currentStereo; }
     bool isStereoInstance() const noexcept { return numChannels >= 2; }
+    SidechainSource getSidechainSource() const noexcept { return currentScSource; }
+
+    CustomEnvelope& getCustomEnvelope() noexcept { return customEnvelope; }
 
 private:
     double sampleRate = 44100.0;
@@ -133,9 +139,11 @@ private:
     float releaseTimeMs = 100.0f;
     bool listenSidechain = false;
     bool isBypassed = false;
+    SidechainSource currentScSource = SidechainSource::ExternalAudio;
 
     std::array<ParametricBandConfig, NumParametricBands> currentBands;
     StereoConfig currentStereo;
+    CustomEnvelope customEnvelope;
 
     // Smoothing coefficients
     float attackCoeff = 0.0f;
@@ -144,11 +152,9 @@ private:
     void updateCoefficients();
     void initializeBands();
 
-    // Encode/decode stereo to mid-side and back
     void encodeToMidSide(juce::AudioBuffer<float>& buffer);
     void decodeFromMidSide(juce::AudioBuffer<float>& buffer);
 
-    // 48-Band Dynamic Spectral EQ structures
     struct DynamicBand
     {
         float centerFreq = 1000.0f;
