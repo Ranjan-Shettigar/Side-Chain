@@ -325,8 +325,8 @@ SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioPr
     updateSelectedBandUI(0);
     updateStereoSectionUI();
 
-    // Dimensions: 880 x 640
-    setSize(880, 640);
+    // Dimensions: 880 x 610
+    setSize(880, 610);
     setResizable(false, false);
 
     startTimerHz(60);
@@ -541,21 +541,6 @@ void SideDuckerAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.7f));
     g.drawText("SHARPNESS & TRIM", 645, 412, 195, 16, juce::Justification::centred);
-
-    // Footer Bar
-    g.setColour(CustomLookAndFeel::m3OnSurfaceVariant.withAlpha(0.5f));
-    g.setFont(juce::Font(10.0f, juce::Font::plain));
-    int activeBands = processorRef.getDuckingProcessor().getActiveNumBands();
-    g.drawText(juce::String(activeBands) + "-Band High Resolution Spectral Engine | Sidechain Dynamic Ducking", 18, getHeight() - 24, 450, 18, juce::Justification::centredLeft);
-
-    float scLevel = processorRef.getDuckingProcessor().getCurrentSidechainLevel();
-    bool scActive = (scLevel > 0.005f);
-
-    g.setColour(scActive ? CustomLookAndFeel::m3Secondary : CustomLookAndFeel::m3Outline);
-    g.fillEllipse(static_cast<float>(getWidth() - 140), static_cast<float>(getHeight() - 17), 6.0f, 6.0f);
-
-    g.setColour(scActive ? CustomLookAndFeel::m3OnSurface : CustomLookAndFeel::m3OnSurfaceVariant);
-    g.drawText(scActive ? "SC Active" : "SC Idle", getWidth() - 128, getHeight() - 24, 110, 18, juce::Justification::centredLeft);
 }
 
 void SideDuckerAudioProcessorEditor::resized()
