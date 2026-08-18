@@ -2,24 +2,17 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "AudioVisualizerFifo.h"
-#include "CustomEnvelope.h"
 
 /**
- * Dynamic Spectral Ducking Processor with 16 to 128 Adjustable Frequency Bands,
- * FabFilter Pro-Q 4 Inspired Parametric Sensitivity EQ, and Custom Envelope / LFO Engine
+ * Dynamic Spectral Ducking Processor with 16 to 128 Adjustable Frequency Bands
+ * and FabFilter Pro-Q 4 Inspired Parametric Sensitivity EQ
  */
 class DuckingProcessor
 {
 public:
-    static constexpr int MaxBands = 128;
+    static constexpr int MaxBands = 64;
     static constexpr int MinBands = 16;
     static constexpr int NumParametricBands = 6;
-
-    enum class SidechainSource
-    {
-        ExternalAudio = 0,
-        InternalEnvelope
-    };
 
     enum class FilterShape
     {
@@ -94,7 +87,6 @@ public:
                        float outputGainDb,
                        bool sidechainListen,
                        bool bypass,
-                       SidechainSource scSource,
                        int numBands,
                        const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
                        const StereoConfig& stereoConfig);
@@ -127,15 +119,12 @@ public:
     const std::array<ParametricBandConfig, NumParametricBands>& getBandConfigs() const noexcept { return currentBands; }
     const StereoConfig& getStereoConfig() const noexcept { return currentStereo; }
     bool isStereoInstance() const noexcept { return numChannels >= 2; }
-    SidechainSource getSidechainSource() const noexcept { return currentScSource; }
-
-    CustomEnvelope& getCustomEnvelope() noexcept { return customEnvelope; }
 
 private:
     double sampleRate = 44100.0;
     int samplesPerBlock = 512;
     int numChannels = 2;
-    int activeNumBands = 48;
+    int activeNumBands = 32;
 
     // Master Parameters
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedAmount;
@@ -144,11 +133,9 @@ private:
     float releaseTimeMs = 100.0f;
     bool listenSidechain = false;
     bool isBypassed = false;
-    SidechainSource currentScSource = SidechainSource::ExternalAudio;
 
     std::array<ParametricBandConfig, NumParametricBands> currentBands;
     StereoConfig currentStereo;
-    CustomEnvelope customEnvelope;
 
     // Smoothing coefficients
     float attackCoeff = 0.0f;

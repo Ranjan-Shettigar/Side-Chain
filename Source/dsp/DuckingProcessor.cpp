@@ -2,7 +2,7 @@
 
 DuckingProcessor::DuckingProcessor()
 {
-    initializeBands(48);
+    initializeBands(32);
     for (int i = 0; i < MaxBands; ++i)
         bandReductionTelemetry[i].store(0.0f);
 }
@@ -13,7 +13,7 @@ void DuckingProcessor::initializeBands(int count)
     const float minLog = std::log10(20.0f);
     const float maxLog = std::log10(20000.0f);
 
-    float bandQ = 2.4f * (static_cast<float>(activeNumBands) / 48.0f);
+    float bandQ = 2.4f * (static_cast<float>(activeNumBands) / 32.0f);
     bandQ = juce::jlimit(1.2f, 8.0f, bandQ);
 
     for (int i = 0; i < activeNumBands; ++i)
@@ -56,7 +56,6 @@ void DuckingProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
     smoothedAmount.reset(sampleRate, 0.02);
     smoothedOutputGain.reset(sampleRate, 0.02);
-    customEnvelope.setSampleRate(sampleRate);
 
     initializeBands(activeNumBands);
     reset();
@@ -79,7 +78,6 @@ void DuckingProcessor::reset()
 
     currentGainReduction.store(1.0f);
     currentSidechainLevel.store(0.0f);
-    customEnvelope.reset();
     updateCoefficients();
 }
 
@@ -249,7 +247,6 @@ void DuckingProcessor::setParameters(float amountPercent,
                                      float outputGainDb,
                                      bool sidechainListen,
                                      bool bypass,
-                                     SidechainSource scSource,
                                      int numBands,
                                      const std::array<ParametricBandConfig, NumParametricBands>& bandConfigs,
                                      const StereoConfig& stereoConfig)
@@ -271,7 +268,6 @@ void DuckingProcessor::setParameters(float amountPercent,
 
     listenSidechain = sidechainListen;
     isBypassed = bypass;
-    currentScSource = scSource;
     currentBands = bandConfigs;
     currentStereo = stereoConfig;
 }
@@ -279,7 +275,7 @@ void DuckingProcessor::setParameters(float amountPercent,
 void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
                               const juce::AudioBuffer<float>& sidechainBuffer,
                               AudioVisualizerFifo& visualizerFifo,
-                              juce::AudioPlayHead* playHead)
+                              juce::AudioPlayHead*)
 {
     const int numSamples = mainBuffer.getNumSamples();
     const int numMainChannels = mainBuffer.getNumChannels();
@@ -318,13 +314,7 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
     if (sidechainCopyBuffer.getNumSamples() < numSamples)
         sidechainCopyBuffer.setSize(2, numSamples, false, false, true);
 
-    if (currentScSource == SidechainSource::InternalEnvelope)
-    {
-        float* scL = sidechainCopyBuffer.getWritePointer(0);
-        float* scR = sidechainCopyBuffer.getWritePointer(1);
-        customEnvelope.processBlock(scL, scR, numSamples, playHead);
-    }
-    else if (numSidechainChannels > 0)
+    if (numSidechainChannels > 0)
     {
         sidechainCopyBuffer.copyFrom(0, 0, sidechainBuffer, 0, 0, numSamples);
         if (numSidechainChannels > 1)
@@ -397,50 +387,32 @@ void DuckingProcessor::process(juce::AudioBuffer<float>& mainBuffer,
 
         float bandMaxEnergy = 0.0f;
 
-        if (currentScSource == SidechainSource::InternalEnvelope)
+        for (int i = 0; i < numSamples; ++i)
         {
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float scMagL = std::abs(scL[i]);
-                float scMagR = std::abs(scR[i]);
-                float scMagMax = juce::jmax(scMagL, scMagR);
+            float fScL = band.scFilterL.processSample(scL[i]);
+            float fScR = band.scFilterR.processSample(scR[i]);
 
-                band.envelopeStateL = scMagL;
-                band.envelopeStateR = scMagR;
+            float scMagL = std::abs(fScL);
+            float scMagR = std::abs(fScR);
 
-                if (scMagMax > bandMaxEnergy)
-                    bandMaxEnergy = scMagMax;
-            }
-        }
-        else
-        {
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float fScL = band.scFilterL.processSample(scL[i]);
-                float fScR = band.scFilterR.processSample(scR[i]);
+            float scSum = 0.5f * (scMagL + scMagR);
+            float linkedMagL = scMagL + linkFactor * (scSum - scMagL);
+            float linkedMagR = scMagR + linkFactor * (scSum - scMagR);
 
-                float scMagL = std::abs(fScL);
-                float scMagR = std::abs(fScR);
+            float scMagMax = juce::jmax(linkedMagL, linkedMagR);
 
-                float scSum = 0.5f * (scMagL + scMagR);
-                float linkedMagL = scMagL + linkFactor * (scSum - scMagL);
-                float linkedMagR = scMagR + linkFactor * (scSum - scMagR);
+            if (linkedMagL > band.envelopeStateL)
+                band.envelopeStateL = attackCoeff * band.envelopeStateL + (1.0f - attackCoeff) * linkedMagL;
+            else
+                band.envelopeStateL = releaseCoeff * band.envelopeStateL + (1.0f - releaseCoeff) * linkedMagL;
 
-                float scMagMax = juce::jmax(linkedMagL, linkedMagR);
+            if (linkedMagR > band.envelopeStateR)
+                band.envelopeStateR = attackCoeff * band.envelopeStateR + (1.0f - attackCoeff) * linkedMagR;
+            else
+                band.envelopeStateR = releaseCoeff * band.envelopeStateR + (1.0f - releaseCoeff) * linkedMagR;
 
-                if (linkedMagL > band.envelopeStateL)
-                    band.envelopeStateL = attackCoeff * band.envelopeStateL + (1.0f - attackCoeff) * linkedMagL;
-                else
-                    band.envelopeStateL = releaseCoeff * band.envelopeStateL + (1.0f - releaseCoeff) * linkedMagL;
-
-                if (linkedMagR > band.envelopeStateR)
-                    band.envelopeStateR = attackCoeff * band.envelopeStateR + (1.0f - attackCoeff) * linkedMagR;
-                else
-                    band.envelopeStateR = releaseCoeff * band.envelopeStateR + (1.0f - releaseCoeff) * linkedMagR;
-
-                if (scMagMax > bandMaxEnergy)
-                    bandMaxEnergy = scMagMax;
-            }
+            if (scMagMax > bandMaxEnergy)
+                bandMaxEnergy = scMagMax;
         }
 
         if (bandMaxEnergy > maxSidechainInBlock)
