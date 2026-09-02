@@ -1,6 +1,10 @@
 #include "DuckingVisualizer.h"
 #include "CustomLookAndFeel.h"
 #include "../PluginProcessor.h"
+#include <cmath>
+#include <algorithm>
+#include <vector>
+#include <array>
 
 // Google Material Design 3 / Pro-Q Tonal Node Palette
 const std::array<juce::Colour, 6> DuckingVisualizer::bandColours = {
@@ -608,7 +612,7 @@ void DuckingVisualizer::paint(juce::Graphics& g)
         juce::Font hudFont(11.0f, juce::Font::bold);
         int hudW = hudFont.getStringWidth(hudText) + 24;
         int hudH = 24;
-        int hudX = juce::jlimit(static_cast<int>(startX + 8.0f), static_cast<int>(startX + width - hudW - 8.0f), static_cast<int>(activeHudPos.x - hudW / 2));
+        int hudX = juce::jlimit(static_cast<int>(startX + 8.0f), static_cast<int>(startX + width - static_cast<float>(hudW) - 8.0f), static_cast<int>(activeHudPos.x - static_cast<float>(hudW) * 0.5f));
         int hudY = (activeHudPos.y > startY + 40.0f) ? static_cast<int>(activeHudPos.y - 38.0f) : static_cast<int>(activeHudPos.y + 22.0f);
 
         auto hudRect = juce::Rectangle<float>(static_cast<float>(hudX), static_cast<float>(hudY), static_cast<float>(hudW), static_cast<float>(hudH));

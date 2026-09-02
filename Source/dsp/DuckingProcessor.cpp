@@ -1,4 +1,5 @@
 #include "DuckingProcessor.h"
+#include <cmath>
 
 DuckingProcessor::DuckingProcessor()
 {

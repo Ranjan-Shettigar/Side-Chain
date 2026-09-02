@@ -1,5 +1,9 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <memory>
+#include <vector>
+#include <array>
+#include <cmath>
 
 SideDuckerAudioProcessor::SideDuckerAudioProcessor()
     : AudioProcessor(BusesProperties()

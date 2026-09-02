@@ -1,4 +1,7 @@
 #include "CustomLookAndFeel.h"
+#include <cmath>
+#include <algorithm>
+#include <utility>
 
 // Material Design 3 Tonal Dark Palette
 const juce::Colour CustomLookAndFeel::m3Surface                 = juce::Colour::fromRGB(17, 19, 24);   // #111318
@@ -294,7 +297,8 @@ void CustomLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Rectang
     if (isSeparator)
     {
         g.setColour(m3OutlineVariant);
-        g.drawLine(area.getX() + 8.0f, area.getCentreY(), area.getRight() - 8.0f, area.getCentreY(), 1.0f);
+        float y = static_cast<float>(area.getCentreY());
+        g.drawLine(static_cast<float>(area.getX() + 8), y, static_cast<float>(area.getRight() - 8), y, 1.0f);
         return;
     }
 

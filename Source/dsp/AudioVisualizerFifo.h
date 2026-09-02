@@ -1,6 +1,9 @@
 #pragma once
 #include <juce_core/juce_core.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <vector>
+#include <cstring>
+#include <algorithm>
 
 /**
  * Lock-free FIFO structure for streaming audio frames (Input, Output, Sidechain, GR)

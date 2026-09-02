@@ -1,5 +1,9 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <atomic>
+#include <array>
+#include <memory>
+#include <vector>
 #include "dsp/DuckingProcessor.h"
 #include "dsp/AudioVisualizerFifo.h"
 

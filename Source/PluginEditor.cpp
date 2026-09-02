@@ -1,4 +1,7 @@
 #include "PluginEditor.h"
+#include <cmath>
+#include <array>
+#include <memory>
 
 SideDuckerAudioProcessorEditor::SideDuckerAudioProcessorEditor(SideDuckerAudioProcessor& p)
     : AudioProcessorEditor(&p),

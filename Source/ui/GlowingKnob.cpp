@@ -1,5 +1,6 @@
 #include "GlowingKnob.h"
 #include "CustomLookAndFeel.h"
+#include <cmath>
 
 GlowingKnob::GlowingKnob()
 {

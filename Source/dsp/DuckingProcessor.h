@@ -1,6 +1,11 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
+#include <vector>
+#include <atomic>
+#include <cmath>
+#include <algorithm>
 #include "AudioVisualizerFifo.h"
 
 /**

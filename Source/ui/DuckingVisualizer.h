@@ -1,6 +1,10 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
+#include <vector>
+#include <functional>
+#include <utility>
 #include "../dsp/AudioVisualizerFifo.h"
 #include "../dsp/DuckingProcessor.h"
 
